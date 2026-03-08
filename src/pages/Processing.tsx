@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import AnimatedProgress from "@/components/ui/animated-progress";
+import { getAnalysis } from "@/services/analysis-service";
 import type { UploadedFile } from "@/types";
 
 interface ProcessingStage {
@@ -34,49 +35,90 @@ const Processing = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const passedFiles = (location.state as { files?: UploadedFile[] })?.files;
+  const analysisIds = (location.state as { analysisIds?: string[] })?.analysisIds;
 
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
   const [isCancelled, setIsCancelled] = useState(false);
 
-  // Simulate processing stages
+  // Poll for real analysis status if we have analysis IDs
+  useEffect(() => {
+    if (!analysisIds?.length || isCancelled || isComplete) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const analysis = await getAnalysis(analysisIds[0]);
+        if (analysis.status === "completed") {
+          setIsComplete(true);
+          setProgress(100);
+          setCurrentStageIndex(stages.length - 1);
+          clearInterval(pollInterval);
+        } else if (analysis.status === "failed") {
+          setIsCancelled(true);
+          clearInterval(pollInterval);
+        } else if (analysis.status === "processing") {
+          setCurrentStageIndex(2);
+          setProgress(60);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    }, 1500);
+
+    return () => clearInterval(pollInterval);
+  }, [analysisIds, isCancelled, isComplete]);
+
+  // Simulated progress for visual feedback (or mock mode)
   useEffect(() => {
     if (isCancelled || isComplete) return;
+    // If we have real analysis IDs, just animate up to the current stage
+    // If no analysis IDs (mock mode), simulate fully
+    const isMock = !analysisIds?.length;
 
     const stageInterval = setInterval(() => {
       setProgress((prev) => {
         const stageSize = 100 / stages.length;
         const stageStart = currentStageIndex * stageSize;
         const stageEnd = stageStart + stageSize;
-        const next = prev + Math.random() * 3 + 1;
 
-        if (next >= stageEnd) {
-          if (currentStageIndex < stages.length - 1) {
-            setCurrentStageIndex((s) => s + 1);
-            return stageEnd;
-          } else {
-            clearInterval(stageInterval);
-            setIsComplete(true);
-            return 100;
+        if (isMock) {
+          const next = prev + Math.random() * 3 + 1;
+          if (next >= stageEnd) {
+            if (currentStageIndex < stages.length - 1) {
+              setCurrentStageIndex((s) => s + 1);
+              return stageEnd;
+            } else {
+              clearInterval(stageInterval);
+              setIsComplete(true);
+              return 100;
+            }
           }
+          return Math.min(next, 100);
+        } else {
+          // Real mode: gently animate towards current stage
+          const target = stageEnd - 5;
+          if (prev < target) {
+            return prev + Math.random() * 2 + 0.5;
+          }
+          return prev;
         }
-        return Math.min(next, 100);
       });
     }, 200);
 
     return () => clearInterval(stageInterval);
-  }, [currentStageIndex, isCancelled, isComplete]);
+  }, [currentStageIndex, isCancelled, isComplete, analysisIds]);
 
   // Auto-navigate to results on completion
   useEffect(() => {
     if (isComplete) {
+      const targetId = analysisIds?.[0] || id;
       const timer = setTimeout(() => {
-        navigate(`/analysis/${id}`);
+        navigate(`/analysis/${targetId}`);
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isComplete, id, navigate]);
+  }, [isComplete, id, analysisIds, navigate]);
 
   const handleCancel = () => {
     setIsCancelled(true);
@@ -86,7 +128,6 @@ const Processing = () => {
 
   return (
     <div className="px-4 py-6 max-w-lg mx-auto space-y-6">
-      {/* Header */}
       <div className="animate-fade-in">
         <h1 className="text-2xl font-bold text-foreground">
           {isComplete ? "Analysis Complete!" : isCancelled ? "Cancelled" : "Processing"}
@@ -100,10 +141,8 @@ const Processing = () => {
         </p>
       </div>
 
-      {/* Main Progress Card */}
       <Card className="border-border overflow-hidden">
         <CardContent className="p-6">
-          {/* Spinner / Status Icon */}
           <div className="flex justify-center mb-6">
             {isComplete ? (
               <div className="rounded-full bg-success/15 p-4 animate-scale-in">
@@ -120,7 +159,6 @@ const Processing = () => {
             )}
           </div>
 
-          {/* Current Stage Label */}
           {!isCancelled && (
             <div className="text-center mb-5">
               <p className="text-sm font-semibold text-foreground mb-1">
@@ -132,7 +170,6 @@ const Processing = () => {
             </div>
           )}
 
-          {/* Progress Bar */}
           {!isCancelled && (
             <AnimatedProgress
               value={progress}
@@ -145,7 +182,6 @@ const Processing = () => {
         </CardContent>
       </Card>
 
-      {/* Stage Indicators */}
       {!isCancelled && (
         <div className="space-y-2 animate-fade-in" style={{ animationDelay: "0.2s", opacity: 0 }}>
           {stages.map((stage, index) => {
@@ -168,11 +204,7 @@ const Processing = () => {
                 <div
                   className={cn(
                     "rounded-full p-1.5 transition-colors",
-                    isDone
-                      ? "bg-success/15"
-                      : isActive
-                      ? "bg-primary/15"
-                      : "bg-muted"
+                    isDone ? "bg-success/15" : isActive ? "bg-primary/15" : "bg-muted"
                   )}
                 >
                   {isDone ? (
@@ -184,42 +216,24 @@ const Processing = () => {
                   )}
                 </div>
                 <div className="flex-1">
-                  <p
-                    className={cn(
-                      "text-xs font-medium",
-                      isDone ? "text-success" : isActive ? "text-foreground" : "text-muted-foreground"
-                    )}
-                  >
+                  <p className={cn("text-xs font-medium", isDone ? "text-success" : isActive ? "text-foreground" : "text-muted-foreground")}>
                     {stage.label}
                   </p>
                 </div>
-                {isDone && (
-                  <span className="text-[10px] font-medium text-success">Done</span>
-                )}
+                {isDone && <span className="text-[10px] font-medium text-success">Done</span>}
               </div>
             );
           })}
         </div>
       )}
 
-      {/* Actions */}
       <div className="flex gap-3">
         {!isComplete && !isCancelled && (
-          <Button
-            variant="outline"
-            onClick={handleCancel}
-            className="flex-1 gap-2"
-          >
-            Cancel
-          </Button>
+          <Button variant="outline" onClick={handleCancel} className="flex-1 gap-2">Cancel</Button>
         )}
         {isCancelled && (
           <>
-            <Button
-              variant="outline"
-              onClick={() => navigate("/upload")}
-              className="flex-1 gap-2"
-            >
+            <Button variant="outline" onClick={() => navigate("/upload")} className="flex-1 gap-2">
               <ArrowLeft className="h-4 w-4" />
               Back to Upload
             </Button>
@@ -238,7 +252,6 @@ const Processing = () => {
         )}
       </div>
 
-      {/* File Info */}
       {passedFiles && passedFiles.length > 0 && (
         <div className="text-center">
           <p className="text-[10px] text-muted-foreground">

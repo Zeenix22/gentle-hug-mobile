@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      analyses: {
+        Row: {
+          authenticity_level: string | null
+          completed_at: string | null
+          confidence_score: number | null
+          created_at: string
+          details: Json | null
+          exif_data: Json | null
+          file_name: string
+          file_size: number
+          file_type: string
+          hash_info: Json | null
+          id: string
+          status: string
+          storage_path: string
+          summary: string | null
+          user_id: string
+        }
+        Insert: {
+          authenticity_level?: string | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          details?: Json | null
+          exif_data?: Json | null
+          file_name: string
+          file_size: number
+          file_type: string
+          hash_info?: Json | null
+          id?: string
+          status?: string
+          storage_path: string
+          summary?: string | null
+          user_id: string
+        }
+        Update: {
+          authenticity_level?: string | null
+          completed_at?: string | null
+          confidence_score?: number | null
+          created_at?: string
+          details?: Json | null
+          exif_data?: Json | null
+          file_name?: string
+          file_size?: number
+          file_type?: string
+          hash_info?: Json | null
+          id?: string
+          status?: string
+          storage_path?: string
+          summary?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
