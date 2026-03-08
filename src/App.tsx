@@ -12,6 +12,7 @@ import Processing from "./pages/Processing";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
 import Help from "./pages/Help";
+import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
