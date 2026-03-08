@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Clock,
   Search,
   Filter,
   Image,
@@ -9,13 +8,14 @@ import {
   FileText,
   ChevronRight,
   SlidersHorizontal,
-  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import StatusBadge from "@/components/ui/status-badge";
+import ErrorState from "@/components/ui/error-state";
+import HistorySkeleton from "@/components/skeletons/HistorySkeleton";
 import { mockAnalysisResults } from "@/data/mock-analyses";
 import { getUserAnalyses } from "@/services/analysis-service";
 import { useAuth } from "@/contexts/AuthContext";
@@ -59,19 +59,23 @@ const History = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [dbAnalyses, setDbAnalyses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      if (user) {
-        try {
-          const data = await getUserAnalyses();
-          setDbAnalyses(data);
-        } catch { /* fall back to mock */ }
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    if (user) {
+      try {
+        const data = await getUserAnalyses();
+        setDbAnalyses(data);
+      } catch {
+        setError(true);
       }
-      setLoading(false);
-    };
-    load();
+    }
+    setLoading(false);
   }, [user]);
+
+  useEffect(() => { load(); }, [load]);
 
   const allItems: NormalizedItem[] = useMemo(() => {
     if (dbAnalyses.length > 0) {
@@ -182,13 +186,19 @@ const History = () => {
 
       <div className="space-y-2">
         {loading ? (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-6 w-6 text-primary animate-spin" />
-          </div>
+          <HistorySkeleton />
+        ) : error ? (
+          <ErrorState
+            title="Couldn't load history"
+            description="There was a problem fetching your analyses."
+            onRetry={load}
+          />
         ) : filtered.length === 0 ? (
           <Card className="border-border">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-              <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
+              <div className="rounded-full bg-muted p-3 mb-3">
+                <Search className="h-6 w-6 text-muted-foreground/40" />
+              </div>
               <p className="text-sm font-medium text-muted-foreground">No results found</p>
               <p className="text-xs text-muted-foreground/70 mt-1">Try adjusting your search or filters</p>
               {activeFilterCount > 0 && (
