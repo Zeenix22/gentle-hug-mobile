@@ -157,24 +157,61 @@ const Analysis = () => {
         </CardContent>
       </Card>
 
-      <div className="flex gap-3 animate-fade-in" style={{ animationDelay: "0.15s", opacity: 0 }}>
-        <Button
-          variant="outline"
-          className="flex-1 gap-2 text-sm"
-          onClick={() => toast({ title: "Coming soon", description: "PDF report generation will be available soon." })}
-        >
-          <Download className="h-4 w-4" /> Download Report
-        </Button>
+      <div className="flex gap-2 animate-fade-in" style={{ animationDelay: "0.15s", opacity: 0 }}>
         <Button
           variant="outline"
           className="flex-1 gap-2 text-sm"
           onClick={() => {
-            navigator.clipboard.writeText(window.location.href);
-            toast({ title: "Link copied", description: "Analysis link copied to clipboard." });
+            downloadReport(result);
+            toast({ title: "Report downloaded", description: "Text report saved to your device." });
+          }}
+        >
+          <Download className="h-4 w-4" /> Report
+        </Button>
+        <Button
+          variant="outline"
+          className="flex-1 gap-2 text-sm"
+          onClick={async () => {
+            const usedNativeShare = await shareAnalysis(result);
+            if (!usedNativeShare) {
+              toast({ title: "Link copied", description: "Analysis link copied to clipboard." });
+            }
           }}
         >
           <Share2 className="h-4 w-4" /> Share
         </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent className="max-w-sm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Analysis</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this analysis and its associated file. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={async () => {
+                  try {
+                    await deleteAnalysis(result.id);
+                    toast({ title: "Deleted", description: "Analysis has been removed." });
+                    navigate("/history");
+                  } catch {
+                    toast({ title: "Delete failed", description: "Could not delete this analysis.", variant: "destructive" });
+                  }
+                }}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
 
       {result.details.length > 0 && (
