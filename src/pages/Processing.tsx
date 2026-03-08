@@ -115,12 +115,21 @@ const Processing = () => {
   useEffect(() => {
     if (isComplete) {
       const targetId = analysisIds?.[0] || id;
+
+      // Generate and store mock analysis for unauthenticated users
+      if (!analysisIds?.length && mockFileInfo?.length && targetId) {
+        const info = mockFileInfo[0];
+        const mockResult = generateMockAnalysis(targetId, info.name, info.fileType, info.size);
+        // Store in sessionStorage so Analysis page can retrieve it
+        sessionStorage.setItem(`mock-analysis-${targetId}`, JSON.stringify(mockResult));
+      }
+
       const timer = setTimeout(() => {
         navigate(`/analysis/${targetId}`);
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isComplete, id, analysisIds, navigate]);
+  }, [isComplete, id, analysisIds, mockFileInfo, navigate]);
 
   const handleCancel = () => {
     setIsCancelled(true);
