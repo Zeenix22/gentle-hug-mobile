@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import AnimatedProgress from "@/components/ui/animated-progress";
 import { getAnalysis } from "@/services/analysis-service";
+import { generateMockAnalysis } from "@/data/mock-analyses";
 import type { UploadedFile } from "@/types";
 
 interface ProcessingStage {
