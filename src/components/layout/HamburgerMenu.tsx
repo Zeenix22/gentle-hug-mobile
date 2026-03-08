@@ -9,9 +9,9 @@ interface HamburgerMenuProps {
 }
 
 const menuItems = [
-  { label: "Settings", icon: Settings, path: "/profile" },
+  { label: "Settings", icon: Settings, path: "/settings" },
   { label: "About", icon: Info, path: "/help" },
-  { label: "Privacy Policy", icon: Lock, path: "/help" },
+  { label: "Privacy Policy", icon: Lock, path: "/settings" },
   { label: "Terms of Service", icon: FileText, path: "/help" },
 ];
 

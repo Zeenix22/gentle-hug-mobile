@@ -12,6 +12,7 @@ import Processing from "./pages/Processing";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
 import Help from "./pages/Help";
+import Settings from "./pages/Settings";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="/history" element={<History />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/help" element={<Help />} />
+            <Route path="/settings" element={<Settings />} />
           </Route>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
