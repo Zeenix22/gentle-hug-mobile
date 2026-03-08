@@ -11,6 +11,9 @@ import {
   Hash,
   Shield,
   Trash2,
+  Brain,
+  Cpu,
+  Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -156,6 +159,92 @@ const Analysis = () => {
           </p>
         </CardContent>
       </Card>
+
+      {/* Score Breakdown: Heuristic vs AI */}
+      {(() => {
+        const aiScoreStr = result.exifData?.["AI Score"];
+        const hasAI = !!aiScoreStr;
+        const aiScore = hasAI ? parseInt(aiScoreStr!.replace("/100", "")) : null;
+        // Reverse-engineer heuristic score from blended: blended = heuristic*0.4 + ai*0.6
+        const heuristicScore = hasAI && aiScore != null
+          ? Math.round((result.confidenceScore - aiScore * 0.6) / 0.4)
+          : result.confidenceScore;
+
+        const scoreBarColor = (score: number) =>
+          score >= 80 ? "bg-success" : score >= 55 ? "bg-warning" : "bg-destructive";
+
+        return (
+          <Card className="border-border animate-fade-in" style={{ animationDelay: "0.12s", opacity: 0 }}>
+            <CardContent className="py-4 space-y-3">
+              <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <Shield className="h-4 w-4 text-primary" />
+                Score Breakdown
+              </h2>
+
+              {/* Heuristic Score */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Cpu className="h-3 w-3" /> Heuristic Analysis
+                  </span>
+                  <span className="text-xs font-bold text-foreground">{Math.max(0, Math.min(100, heuristicScore))}/100</span>
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(heuristicScore))}
+                    style={{ width: `${Math.max(0, Math.min(100, heuristicScore))}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  File structure, entropy, metadata, EXIF, copy-move detection
+                </p>
+              </div>
+
+              {/* AI Vision Score */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Eye className="h-3 w-3" /> AI Vision Analysis
+                  </span>
+                  {hasAI && aiScore != null ? (
+                    <span className="text-xs font-bold text-foreground">{aiScore}/100</span>
+                  ) : (
+                    <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
+                  )}
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  {hasAI && aiScore != null ? (
+                    <div
+                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(aiScore))}
+                      style={{ width: `${aiScore}%` }}
+                    />
+                  ) : (
+                    <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {hasAI ? "Gemini AI visual inspection for manipulation, deepfakes & AI generation" : "AI analysis requires authenticated upload. Available for image files only."}
+                </p>
+              </div>
+
+              {/* Blended Score Formula */}
+              {hasAI && (
+                <div className="pt-2 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <Brain className="h-3 w-3" /> Blended Score
+                    </span>
+                    <span className="text-xs font-bold text-primary">{result.confidenceScore}/100</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    Weighted: 40% heuristic + 60% AI vision
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <div className="flex gap-2 animate-fade-in" style={{ animationDelay: "0.15s", opacity: 0 }}>
         <Button
