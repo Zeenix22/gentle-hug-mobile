@@ -37,6 +37,7 @@ const Processing = () => {
   const location = useLocation();
   const passedFiles = (location.state as { files?: UploadedFile[] })?.files;
   const analysisIds = (location.state as { analysisIds?: string[] })?.analysisIds;
+  const mockFileInfo = (location.state as { mockFileInfo?: { name: string; fileType: "image" | "video" | "document"; size: number }[] })?.mockFileInfo;
 
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
