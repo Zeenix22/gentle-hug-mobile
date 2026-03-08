@@ -9,14 +9,12 @@ export async function uploadFileAndCreateAnalysis(
   const fileExt = file.name.split(".").pop();
   const storagePath = `${userId}/${crypto.randomUUID()}.${fileExt}`;
 
-  // Upload to storage
   const { error: uploadError } = await supabase.storage
     .from("uploads")
     .upload(storagePath, file);
 
   if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
-  // Create analysis record
   const { data, error: insertError } = await supabase
     .from("analyses" as any)
     .insert({
@@ -76,4 +74,26 @@ export async function getUserAnalyses() {
 
   if (error) throw new Error(error.message);
   return (data as any[]) || [];
+}
+
+export async function deleteAnalysis(analysisId: string): Promise<void> {
+  const { data: analysis, error: fetchError } = await supabase
+    .from("analyses" as any)
+    .select("storage_path")
+    .eq("id", analysisId)
+    .single();
+
+  if (fetchError) throw new Error(fetchError.message);
+
+  const storagePath = (analysis as any)?.storage_path;
+  if (storagePath) {
+    await supabase.storage.from("uploads").remove([storagePath]);
+  }
+
+  const { error } = await supabase
+    .from("analyses" as any)
+    .delete()
+    .eq("id", analysisId);
+
+  if (error) throw new Error(error.message);
 }

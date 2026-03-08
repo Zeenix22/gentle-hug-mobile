@@ -8,6 +8,7 @@ import {
   FileText,
   ChevronRight,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -17,7 +18,19 @@ import StatusBadge from "@/components/ui/status-badge";
 import ErrorState from "@/components/ui/error-state";
 import HistorySkeleton from "@/components/skeletons/HistorySkeleton";
 import { mockAnalysisResults } from "@/data/mock-analyses";
-import { getUserAnalyses } from "@/services/analysis-service";
+import { getUserAnalyses, deleteAnalysis } from "@/services/analysis-service";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuthenticityLevel, FileType } from "@/types";
 import { formatDistanceToNow } from "date-fns";
@@ -221,20 +234,22 @@ const History = () => {
             return (
               <Card
                 key={item.id}
-                className="border-border hover:border-primary/20 transition-all duration-200 cursor-pointer hover:shadow-sm animate-fade-in"
+                className="border-border hover:border-primary/20 transition-all duration-200 hover:shadow-sm animate-fade-in"
                 style={{ animationDelay: `${0.05 * index}s`, opacity: 0 }}
-                onClick={() => navigate(`/analysis/${item.id}`)}
               >
                 <CardContent className="flex items-center gap-3 p-3">
-                  <div className={cn(
-                    "flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center",
-                    item.fileType === "image" ? "bg-primary/10 text-primary" :
-                    item.fileType === "video" ? "bg-warning/10 text-warning" :
-                    "bg-success/10 text-success"
-                  )}>
+                  <div
+                    className={cn(
+                      "flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center cursor-pointer",
+                      item.fileType === "image" ? "bg-primary/10 text-primary" :
+                      item.fileType === "video" ? "bg-warning/10 text-warning" :
+                      "bg-success/10 text-success"
+                    )}
+                    onClick={() => navigate(`/analysis/${item.id}`)}
+                  >
                     <FileIcon className="h-5 w-5" />
                   </div>
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => navigate(`/analysis/${item.id}`)}>
                     <p className="text-sm font-medium text-foreground truncate">{item.fileName}</p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <StatusBadge status={item.authenticityLevel} size="sm" showIcon={false} />
@@ -243,7 +258,41 @@ const History = () => {
                       <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
                     </div>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        className="flex-shrink-0 h-8 w-8 rounded-md flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors min-h-0 min-w-0"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="max-w-sm">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete "{item.fileName}"?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This will permanently delete this analysis. This cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={async () => {
+                            try {
+                              await deleteAnalysis(item.id);
+                              toast({ title: "Deleted", description: `${item.fileName} has been removed.` });
+                              load();
+                            } catch {
+                              toast({ title: "Delete failed", description: "Could not delete this analysis. You may need to be logged in.", variant: "destructive" });
+                            }
+                          }}
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </CardContent>
               </Card>
             );
