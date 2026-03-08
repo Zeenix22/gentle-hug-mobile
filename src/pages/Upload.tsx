@@ -6,6 +6,9 @@ import { useFileUpload } from "@/hooks/use-file-upload";
 import Dropzone from "@/components/upload/Dropzone";
 import FilePreviewCard from "@/components/upload/FilePreviewCard";
 import FileTypeBadge from "@/components/ui/file-type-badge";
+import { useAuth } from "@/contexts/AuthContext";
+import { uploadFileAndCreateAnalysis, triggerProcessing } from "@/services/analysis-service";
+import { toast } from "@/hooks/use-toast";
 
 const supportedTypes = [
   { icon: Image, label: "Images", formats: "JPG, PNG, GIF, WEBP" },
@@ -15,6 +18,8 @@ const supportedTypes = [
 
 const UploadPage = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [isUploading, setIsUploading] = useState(false);
   const {
     files,
     isDragging,
@@ -28,24 +33,47 @@ const UploadPage = () => {
     handleInputChange,
   } = useFileUpload({ maxFiles: 10 });
 
-  const handleAnalyze = () => {
-    // In Phase 7 this will trigger actual upload + processing
-    // For now, navigate to a mock processing page
-    const mockId = crypto.randomUUID().slice(0, 8);
-    navigate(`/processing/${mockId}`, { state: { files: files.map(({ raw, ...f }) => f) } });
+  const handleAnalyze = async () => {
+    if (!user) {
+      // No auth — use mock flow
+      const mockId = crypto.randomUUID().slice(0, 8);
+      navigate(`/processing/${mockId}`, { state: { files: files.map(({ raw, ...f }) => f) } });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const analysisIds: string[] = [];
+
+      for (const file of files) {
+        const analysisId = await uploadFileAndCreateAnalysis(file.raw, file.fileType, user.id);
+        analysisIds.push(analysisId);
+      }
+
+      // Navigate to processing page with real analysis IDs
+      const primaryId = analysisIds[0];
+      navigate(`/processing/${primaryId}`, {
+        state: { analysisIds, files: files.map(({ raw, ...f }) => f) },
+      });
+
+      // Trigger processing for each file (fire and forget — Processing page will poll)
+      for (const id of analysisIds) {
+        triggerProcessing(id).catch(console.error);
+      }
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
     <div className="px-4 py-6 max-w-lg mx-auto space-y-5">
-      {/* Header */}
       <div className="animate-fade-in">
         <h1 className="text-2xl font-bold text-foreground">Upload Files</h1>
-        <p className="text-sm text-muted-foreground">
-          Select files to analyze for authenticity.
-        </p>
+        <p className="text-sm text-muted-foreground">Select files to analyze for authenticity.</p>
       </div>
 
-      {/* Dropzone */}
       <div className="animate-fade-in" style={{ animationDelay: "0.1s", opacity: 0 }}>
         <Dropzone
           isDragging={isDragging}
@@ -59,7 +87,6 @@ const UploadPage = () => {
         />
       </div>
 
-      {/* File List */}
       {files.length > 0 && (
         <div className="space-y-3 animate-fade-in">
           <div className="flex items-center justify-between">
@@ -71,6 +98,7 @@ const UploadPage = () => {
               size="sm"
               onClick={clearFiles}
               className="text-xs text-muted-foreground hover:text-destructive gap-1 h-8 min-h-0"
+              disabled={isUploading}
             >
               <Trash2 className="h-3 w-3" />
               Clear all
@@ -79,28 +107,23 @@ const UploadPage = () => {
 
           <div className="space-y-2">
             {files.map((file) => (
-              <FilePreviewCard
-                key={file.id}
-                file={file}
-                onRemove={removeFile}
-              />
+              <FilePreviewCard key={file.id} file={file} onRemove={removeFile} />
             ))}
           </div>
 
-          {/* Analyze Button */}
           <Button
             variant="trust"
             size="lg"
             onClick={handleAnalyze}
             className="w-full gap-2 font-semibold"
+            disabled={isUploading}
           >
-            Analyze {files.length > 1 ? `${files.length} Files` : "File"}
-            <ArrowRight className="h-4 w-4" />
+            {isUploading ? "Uploading..." : `Analyze ${files.length > 1 ? `${files.length} Files` : "File"}`}
+            {!isUploading && <ArrowRight className="h-4 w-4" />}
           </Button>
         </div>
       )}
 
-      {/* Supported Formats */}
       {files.length === 0 && (
         <div className="space-y-3 animate-fade-in" style={{ animationDelay: "0.2s", opacity: 0 }}>
           <h2 className="text-sm font-semibold text-foreground">Supported Formats</h2>
