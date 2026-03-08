@@ -26,8 +26,20 @@ import StatusBadge from "@/components/ui/status-badge";
 import ErrorState from "@/components/ui/error-state";
 import AnalysisSkeleton from "@/components/skeletons/AnalysisSkeleton";
 import { getMockAnalysis } from "@/data/mock-analyses";
-import { getAnalysis } from "@/services/analysis-service";
+import { getAnalysis, deleteAnalysis } from "@/services/analysis-service";
+import { downloadReport, shareAnalysis } from "@/utils/report-utils";
 import { toast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { AnalysisResult } from "@/types";
 
 const fileTypeIcons: Record<string, typeof Image> = { image: Image, video: Video, document: FileText };
