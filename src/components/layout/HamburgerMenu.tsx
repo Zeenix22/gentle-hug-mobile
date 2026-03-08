@@ -18,10 +18,17 @@ const menuItems = [
 
 const HamburgerMenu = ({ open, onOpenChange }: HamburgerMenuProps) => {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
 
   const handleNavigation = (path: string) => {
     navigate(path);
     onOpenChange(false);
+  };
+
+  const handleLogout = async () => {
+    await signOut();
+    onOpenChange(false);
+    navigate("/login");
   };
 
   return (
