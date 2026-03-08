@@ -33,14 +33,12 @@ const themeOptions: { value: ThemeOption; label: string; icon: typeof Sun }[] = 
 
 const Settings = () => {
   const navigate = useNavigate();
+  const { theme, setTheme: applyTheme } = useTheme();
 
   // Notification preferences
   const [analysisComplete, setAnalysisComplete] = useState(true);
   const [weeklyReport, setWeeklyReport] = useState(false);
   const [productUpdates, setProductUpdates] = useState(true);
-
-  // Theme
-  const [theme, setTheme] = useState<ThemeOption>("light");
 
   // Privacy
   const [shareAnalytics, setShareAnalytics] = useState(true);
