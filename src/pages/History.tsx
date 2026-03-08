@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Clock,
@@ -9,6 +9,7 @@ import {
   FileText,
   ChevronRight,
   SlidersHorizontal,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -16,10 +17,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import StatusBadge from "@/components/ui/status-badge";
 import { mockAnalysisResults } from "@/data/mock-analyses";
+import { getUserAnalyses } from "@/services/analysis-service";
+import { useAuth } from "@/contexts/AuthContext";
 import type { AuthenticityLevel, FileType } from "@/types";
 import { formatDistanceToNow } from "date-fns";
 
-const fileTypeIcons = { image: Image, video: Video, document: FileText };
+const fileTypeIcons: Record<string, typeof Image> = { image: Image, video: Video, document: FileText };
 
 type FilterStatus = "all" | AuthenticityLevel;
 type FilterFileType = "all" | FileType;
@@ -38,42 +41,81 @@ const typeFilters: { value: FilterFileType; label: string; icon: typeof Image }[
   { value: "document", label: "Docs", icon: FileText },
 ];
 
+interface NormalizedItem {
+  id: string;
+  fileName: string;
+  fileType: FileType;
+  authenticityLevel: AuthenticityLevel;
+  confidenceScore: number;
+  createdAt: string;
+}
+
 const History = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
   const [typeFilter, setTypeFilter] = useState<FilterFileType>("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [dbAnalyses, setDbAnalyses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      if (user) {
+        try {
+          const data = await getUserAnalyses();
+          setDbAnalyses(data);
+        } catch { /* fall back to mock */ }
+      }
+      setLoading(false);
+    };
+    load();
+  }, [user]);
+
+  const allItems: NormalizedItem[] = useMemo(() => {
+    if (dbAnalyses.length > 0) {
+      return dbAnalyses.map((a: any) => ({
+        id: a.id,
+        fileName: a.file_name,
+        fileType: a.file_type as FileType,
+        authenticityLevel: (a.authenticity_level || "uncertain") as AuthenticityLevel,
+        confidenceScore: a.confidence_score ?? 0,
+        createdAt: a.created_at,
+      }));
+    }
+    return mockAnalysisResults.map((a) => ({
+      id: a.id,
+      fileName: a.fileName,
+      fileType: a.fileType,
+      authenticityLevel: a.authenticityLevel,
+      confidenceScore: a.confidenceScore,
+      createdAt: a.createdAt,
+    }));
+  }, [dbAnalyses]);
 
   const filtered = useMemo(() => {
-    return mockAnalysisResults.filter((item) => {
+    return allItems.filter((item) => {
       const matchesSearch = item.fileName.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesStatus = statusFilter === "all" || item.authenticityLevel === statusFilter;
       const matchesType = typeFilter === "all" || item.fileType === typeFilter;
       return matchesSearch && matchesStatus && matchesType;
     });
-  }, [searchQuery, statusFilter, typeFilter]);
+  }, [allItems, searchQuery, statusFilter, typeFilter]);
 
   const activeFilterCount = (statusFilter !== "all" ? 1 : 0) + (typeFilter !== "all" ? 1 : 0);
 
   return (
     <div className="px-4 py-6 max-w-lg mx-auto space-y-4">
-      {/* Header */}
       <div className="animate-fade-in">
         <h1 className="text-2xl font-bold text-foreground">Analysis History</h1>
-        <p className="text-sm text-muted-foreground">{mockAnalysisResults.length} analyses total</p>
+        <p className="text-sm text-muted-foreground">{allItems.length} analyses total</p>
       </div>
 
-      {/* Search + Filter Toggle */}
       <div className="flex gap-2 animate-fade-in" style={{ animationDelay: "0.1s", opacity: 0 }}>
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search files..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
+          <Input placeholder="Search files..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9" />
         </div>
         <Button
           variant={showFilters ? "default" : "outline"}
@@ -90,10 +132,8 @@ const History = () => {
         </Button>
       </div>
 
-      {/* Filter Chips */}
       {showFilters && (
         <div className="space-y-3 animate-fade-in">
-          {/* Status Filter */}
           <div>
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Status</p>
             <div className="flex gap-1.5 flex-wrap">
@@ -114,7 +154,6 @@ const History = () => {
             </div>
           </div>
 
-          {/* Type Filter */}
           <div>
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">File Type</p>
             <div className="flex gap-1.5 flex-wrap">
@@ -141,9 +180,12 @@ const History = () => {
         </div>
       )}
 
-      {/* Results List */}
       <div className="space-y-2">
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-6 w-6 text-primary animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
           <Card className="border-border">
             <CardContent className="flex flex-col items-center justify-center py-12 text-center">
               <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -163,7 +205,7 @@ const History = () => {
           </Card>
         ) : (
           filtered.map((item, index) => {
-            const FileIcon = fileTypeIcons[item.fileType];
+            const FileIcon = fileTypeIcons[item.fileType] || FileText;
             const timeAgo = formatDistanceToNow(new Date(item.createdAt), { addSuffix: true });
 
             return (
@@ -174,7 +216,6 @@ const History = () => {
                 onClick={() => navigate(`/analysis/${item.id}`)}
               >
                 <CardContent className="flex items-center gap-3 p-3">
-                  {/* File Type Icon */}
                   <div className={cn(
                     "flex-shrink-0 h-10 w-10 rounded-lg flex items-center justify-center",
                     item.fileType === "image" ? "bg-primary/10 text-primary" :
@@ -183,8 +224,6 @@ const History = () => {
                   )}>
                     <FileIcon className="h-5 w-5" />
                   </div>
-
-                  {/* Info */}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{item.fileName}</p>
                     <div className="flex items-center gap-2 mt-0.5">
@@ -194,8 +233,6 @@ const History = () => {
                       <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
                     </div>
                   </div>
-
-                  {/* Arrow */}
                   <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 </CardContent>
               </Card>
@@ -204,7 +241,6 @@ const History = () => {
         )}
       </div>
 
-      {/* Bottom spacing */}
       <div className="pb-4" />
     </div>
   );
