@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTheme } from "@/contexts/ThemeContext";
 import {
   ArrowLeft,
   Bell,
@@ -32,14 +33,12 @@ const themeOptions: { value: ThemeOption; label: string; icon: typeof Sun }[] = 
 
 const Settings = () => {
   const navigate = useNavigate();
+  const { theme, setTheme: applyTheme } = useTheme();
 
   // Notification preferences
   const [analysisComplete, setAnalysisComplete] = useState(true);
   const [weeklyReport, setWeeklyReport] = useState(false);
   const [productUpdates, setProductUpdates] = useState(true);
-
-  // Theme
-  const [theme, setTheme] = useState<ThemeOption>("light");
 
   // Privacy
   const [shareAnalytics, setShareAnalytics] = useState(true);
@@ -104,8 +103,8 @@ const Settings = () => {
                 <button
                   key={option.value}
                   onClick={() => {
-                    setTheme(option.value);
-                    toast({ title: "Theme updated", description: `Switched to ${option.label} mode. (Visual change coming in Phase 9)` });
+                    applyTheme(option.value);
+                    toast({ title: "Theme updated", description: `Switched to ${option.label} mode.` });
                   }}
                   className={cn(
                     "flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all min-h-0",
