@@ -103,8 +103,8 @@ const Settings = () => {
                 <button
                   key={option.value}
                   onClick={() => {
-                    setTheme(option.value);
-                    toast({ title: "Theme updated", description: `Switched to ${option.label} mode. (Visual change coming in Phase 9)` });
+                    applyTheme(option.value);
+                    toast({ title: "Theme updated", description: `Switched to ${option.label} mode.` });
                   }}
                   className={cn(
                     "flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all min-h-0",
