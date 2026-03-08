@@ -24,7 +24,9 @@ import { Separator } from "@/components/ui/separator";
 import TrustScore from "@/components/ui/trust-score";
 import StatusBadge from "@/components/ui/status-badge";
 import { getMockAnalysis } from "@/data/mock-analyses";
+import { getAnalysis } from "@/services/analysis-service";
 import { toast } from "@/hooks/use-toast";
+import type { AnalysisResult } from "@/types";
 
 const fileTypeIcons = { image: Image, video: Video, document: FileText };
 
