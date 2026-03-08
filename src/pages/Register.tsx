@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 const getPasswordStrength = (password: string) => {
   let score = 0;
@@ -24,6 +25,7 @@ const strengthColors = ["bg-destructive", "bg-warning", "bg-warning", "bg-succes
 
 const Register = () => {
   const navigate = useNavigate();
+  const { signUp } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,32 +43,33 @@ const Register = () => {
       toast({ title: "Missing fields", description: "Please fill in all required fields.", variant: "destructive" });
       return;
     }
-
     if (password !== confirmPassword) {
       toast({ title: "Passwords don't match", description: "Please make sure both passwords are the same.", variant: "destructive" });
       return;
     }
-
     if (password.length < 8) {
       toast({ title: "Weak password", description: "Password must be at least 8 characters.", variant: "destructive" });
       return;
     }
-
     if (!acceptTerms) {
       toast({ title: "Terms required", description: "Please accept the terms and conditions.", variant: "destructive" });
       return;
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast({ title: "Coming soon", description: "Registration will be enabled in Phase 5." });
-    }, 1000);
+    const { error } = await signUp(email, password, name);
+    setIsLoading(false);
+
+    if (error) {
+      toast({ title: "Registration failed", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Check your email", description: "We've sent you a confirmation link to verify your account." });
+      navigate("/login");
+    }
   };
 
   return (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 py-10">
-      {/* Logo */}
       <div className="flex flex-col items-center mb-6 animate-fade-in">
         <div className="rounded-full bg-primary/10 p-3 mb-3">
           <Shield className="h-8 w-8 text-primary" />
@@ -74,7 +77,6 @@ const Register = () => {
         <h1 className="text-xl font-bold text-foreground tracking-tight">Truth Buddy</h1>
       </div>
 
-      {/* Register Card */}
       <Card className="w-full max-w-sm border-border animate-fade-in" style={{ animationDelay: "0.1s", opacity: 0 }}>
         <CardHeader className="text-center pb-4">
           <CardTitle className="text-xl">Create account</CardTitle>
@@ -83,153 +85,73 @@ const Register = () => {
 
         <CardContent className="space-y-4">
           <form onSubmit={handleRegister} className="space-y-4">
-            {/* Name */}
             <div className="space-y-2">
               <Label htmlFor="name" className="text-sm font-medium">Full Name</Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="John Doe"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="pl-9"
-                  autoComplete="name"
-                />
+                <Input id="name" type="text" placeholder="John Doe" value={name} onChange={(e) => setName(e.target.value)} className="pl-9" autoComplete="name" />
               </div>
             </div>
 
-            {/* Email */}
             <div className="space-y-2">
               <Label htmlFor="reg-email" className="text-sm font-medium">Email</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="reg-email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="pl-9"
-                  autoComplete="email"
-                />
+                <Input id="reg-email" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-9" autoComplete="email" />
               </div>
             </div>
 
-            {/* Password */}
             <div className="space-y-2">
               <Label htmlFor="reg-password" className="text-sm font-medium">Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="reg-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Min. 8 characters"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="pl-9 pr-10"
-                  autoComplete="new-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground min-h-0 min-w-0"
-                >
+                <Input id="reg-password" type={showPassword ? "text" : "password"} placeholder="Min. 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} className="pl-9 pr-10" autoComplete="new-password" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-
-              {/* Password Strength */}
               {password.length > 0 && (
                 <div className="space-y-1.5 animate-fade-in">
                   <div className="flex gap-1">
                     {[0, 1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "h-1 flex-1 rounded-full transition-all duration-300",
-                          i < strength ? strengthColors[strength - 1] : "bg-muted"
-                        )}
-                      />
+                      <div key={i} className={cn("h-1 flex-1 rounded-full transition-all duration-300", i < strength ? strengthColors[strength - 1] : "bg-muted")} />
                     ))}
                   </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    {strength > 0 ? strengthLabels[strength - 1] : "Too short"} — use 8+ chars, uppercase, numbers, symbols
-                  </p>
+                  <p className="text-[10px] text-muted-foreground">{strength > 0 ? strengthLabels[strength - 1] : "Too short"} — use 8+ chars, uppercase, numbers, symbols</p>
                 </div>
               )}
             </div>
 
-            {/* Confirm Password */}
             <div className="space-y-2">
               <Label htmlFor="confirm-password" className="text-sm font-medium">Confirm Password</Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="confirm-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Repeat your password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className={cn(
-                    "pl-9",
-                    confirmPassword && confirmPassword !== password && "border-destructive focus-visible:ring-destructive"
-                  )}
-                  autoComplete="new-password"
-                />
-                {confirmPassword && confirmPassword === password && (
-                  <Check className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-success" />
-                )}
+                <Input id="confirm-password" type={showPassword ? "text" : "password"} placeholder="Repeat your password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className={cn("pl-9", confirmPassword && confirmPassword !== password && "border-destructive focus-visible:ring-destructive")} autoComplete="new-password" />
+                {confirmPassword && confirmPassword === password && <Check className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-success" />}
               </div>
-              {confirmPassword && confirmPassword !== password && (
-                <p className="text-[10px] text-destructive">Passwords don't match</p>
-              )}
+              {confirmPassword && confirmPassword !== password && <p className="text-[10px] text-destructive">Passwords don't match</p>}
             </div>
 
-            {/* Terms */}
             <div className="flex items-start gap-2">
-              <Checkbox
-                id="terms"
-                checked={acceptTerms}
-                onCheckedChange={(checked) => setAcceptTerms(checked === true)}
-                className="mt-0.5"
-              />
+              <Checkbox id="terms" checked={acceptTerms} onCheckedChange={(checked) => setAcceptTerms(checked === true)} className="mt-0.5" />
               <label htmlFor="terms" className="text-xs text-muted-foreground leading-relaxed cursor-pointer">
-                I agree to the{" "}
-                <span className="text-primary font-medium hover:underline">Terms of Service</span> and{" "}
-                <span className="text-primary font-medium hover:underline">Privacy Policy</span>
+                I agree to the <span className="text-primary font-medium hover:underline">Terms of Service</span> and <span className="text-primary font-medium hover:underline">Privacy Policy</span>
               </label>
             </div>
 
-            {/* Submit */}
-            <Button
-              type="submit"
-              variant="trust"
-              size="lg"
-              className="w-full gap-2 font-semibold"
-              disabled={isLoading}
-            >
+            <Button type="submit" variant="trust" size="lg" className="w-full gap-2 font-semibold" disabled={isLoading}>
               {isLoading ? "Creating account..." : "Create Account"}
               {!isLoading && <ArrowRight className="h-4 w-4" />}
             </Button>
           </form>
 
-          {/* Divider */}
           <div className="relative">
             <Separator />
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-3 text-xs text-muted-foreground">
-              or sign up with
-            </span>
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-3 text-xs text-muted-foreground">or sign up with</span>
           </div>
 
-          {/* Social */}
           <div className="grid grid-cols-2 gap-3">
-            <Button
-              variant="outline"
-              className="gap-2 text-sm font-medium"
-              onClick={() => toast({ title: "Coming soon", description: "Google sign-up will be available in Phase 5." })}
-            >
+            <Button variant="outline" className="gap-2 text-sm font-medium" onClick={() => toast({ title: "Coming soon", description: "Google sign-up coming soon." })}>
               <svg className="h-4 w-4" viewBox="0 0 24 24">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
                 <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -238,11 +160,7 @@ const Register = () => {
               </svg>
               Google
             </Button>
-            <Button
-              variant="outline"
-              className="gap-2 text-sm font-medium"
-              onClick={() => toast({ title: "Coming soon", description: "GitHub sign-up will be available in Phase 5." })}
-            >
+            <Button variant="outline" className="gap-2 text-sm font-medium" onClick={() => toast({ title: "Coming soon", description: "GitHub sign-up coming soon." })}>
               <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
               </svg>
@@ -252,12 +170,9 @@ const Register = () => {
         </CardContent>
       </Card>
 
-      {/* Login link */}
       <p className="mt-6 text-sm text-muted-foreground animate-fade-in" style={{ animationDelay: "0.2s", opacity: 0 }}>
         Already have an account?{" "}
-        <Link to="/login" className="text-primary font-semibold hover:underline">
-          Sign in
-        </Link>
+        <Link to="/login" className="text-primary font-semibold hover:underline">Sign in</Link>
       </p>
     </div>
   );

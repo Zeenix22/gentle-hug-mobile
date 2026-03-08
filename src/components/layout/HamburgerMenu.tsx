@@ -2,6 +2,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Shield, Settings, Info, Lock, FileText, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface HamburgerMenuProps {
   open: boolean;
@@ -17,10 +18,17 @@ const menuItems = [
 
 const HamburgerMenu = ({ open, onOpenChange }: HamburgerMenuProps) => {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
 
   const handleNavigation = (path: string) => {
     navigate(path);
     onOpenChange(false);
+  };
+
+  const handleLogout = async () => {
+    await signOut();
+    onOpenChange(false);
+    navigate("/login");
   };
 
   return (
@@ -55,10 +63,7 @@ const HamburgerMenu = ({ open, onOpenChange }: HamburgerMenuProps) => {
 
         <div className="py-2">
           <button
-            onClick={() => {
-              // Logout logic will be added in Phase 5
-              onOpenChange(false);
-            }}
+            onClick={handleLogout}
             className="flex items-center gap-3 px-6 py-3 text-sm font-medium text-destructive hover:bg-accent transition-colors w-full min-h-[44px]"
           >
             <LogOut className="h-4 w-4" />
