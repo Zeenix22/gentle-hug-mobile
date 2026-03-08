@@ -85,6 +85,16 @@ const Analysis = () => {
     } catch {
       // Fall back to mock
     }
+
+    // Check sessionStorage for dynamically generated mock
+    const storedMock = sessionStorage.getItem(`mock-analysis-${id}`);
+    if (storedMock) {
+      try {
+        setResult(JSON.parse(storedMock));
+        return;
+      } catch { /* ignore parse errors */ }
+    }
+
     const mock = getMockAnalysis(id ?? "");
     if (mock) {
       setResult(mock);

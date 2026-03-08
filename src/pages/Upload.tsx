@@ -41,7 +41,12 @@ const UploadPage = () => {
 
     if (!user) {
       const mockId = crypto.randomUUID().slice(0, 8);
-      navigate(`/processing/${mockId}`, { state: { files: files.map(({ raw, ...f }) => f) } });
+      navigate(`/processing/${mockId}`, {
+        state: {
+          files: files.map(({ raw, ...f }) => f),
+          mockFileInfo: files.map(f => ({ name: f.name, fileType: f.fileType, size: f.size })),
+        },
+      });
       return;
     }
 

@@ -14,6 +14,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import AnimatedProgress from "@/components/ui/animated-progress";
 import { getAnalysis } from "@/services/analysis-service";
+import { generateMockAnalysis } from "@/data/mock-analyses";
 import type { UploadedFile } from "@/types";
 
 interface ProcessingStage {
@@ -36,6 +37,7 @@ const Processing = () => {
   const location = useLocation();
   const passedFiles = (location.state as { files?: UploadedFile[] })?.files;
   const analysisIds = (location.state as { analysisIds?: string[] })?.analysisIds;
+  const mockFileInfo = (location.state as { mockFileInfo?: { name: string; fileType: "image" | "video" | "document"; size: number }[] })?.mockFileInfo;
 
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -113,12 +115,21 @@ const Processing = () => {
   useEffect(() => {
     if (isComplete) {
       const targetId = analysisIds?.[0] || id;
+
+      // Generate and store mock analysis for unauthenticated users
+      if (!analysisIds?.length && mockFileInfo?.length && targetId) {
+        const info = mockFileInfo[0];
+        const mockResult = generateMockAnalysis(targetId, info.name, info.fileType, info.size);
+        // Store in sessionStorage so Analysis page can retrieve it
+        sessionStorage.setItem(`mock-analysis-${targetId}`, JSON.stringify(mockResult));
+      }
+
       const timer = setTimeout(() => {
         navigate(`/analysis/${targetId}`);
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isComplete, id, analysisIds, navigate]);
+  }, [isComplete, id, analysisIds, mockFileInfo, navigate]);
 
   const handleCancel = () => {
     setIsCancelled(true);
