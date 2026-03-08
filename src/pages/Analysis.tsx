@@ -39,7 +39,47 @@ const severityColors = {
 const Analysis = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const result = getMockAnalysis(id ?? "");
+  const [result, setResult] = useState<AnalysisResult | null | undefined>(undefined);
+
+  useEffect(() => {
+    const load = async () => {
+      // Try loading from DB first
+      try {
+        const dbResult = await getAnalysis(id ?? "");
+        if (dbResult) {
+          setResult({
+            id: dbResult.id,
+            fileId: dbResult.id,
+            fileName: dbResult.file_name,
+            fileType: dbResult.file_type,
+            status: dbResult.status,
+            authenticityLevel: dbResult.authenticity_level || "uncertain",
+            confidenceScore: dbResult.confidence_score ?? 0,
+            summary: dbResult.summary || "",
+            details: dbResult.details || [],
+            exifData: dbResult.exif_data || {},
+            hashInfo: dbResult.hash_info || undefined,
+            createdAt: dbResult.created_at,
+            completedAt: dbResult.completed_at,
+          });
+          return;
+        }
+      } catch {
+        // Fall back to mock
+      }
+      const mock = getMockAnalysis(id ?? "");
+      setResult(mock ?? null);
+    };
+    load();
+  }, [id]);
+
+  if (result === undefined) {
+    return (
+      <div className="px-4 py-6 max-w-lg mx-auto text-center">
+        <p className="text-sm text-muted-foreground">Loading analysis...</p>
+      </div>
+    );
+  }
 
   if (!result) {
     return (
