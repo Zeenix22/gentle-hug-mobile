@@ -18,7 +18,19 @@ import StatusBadge from "@/components/ui/status-badge";
 import ErrorState from "@/components/ui/error-state";
 import HistorySkeleton from "@/components/skeletons/HistorySkeleton";
 import { mockAnalysisResults } from "@/data/mock-analyses";
-import { getUserAnalyses } from "@/services/analysis-service";
+import { getUserAnalyses, deleteAnalysis } from "@/services/analysis-service";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AuthenticityLevel, FileType } from "@/types";
 import { formatDistanceToNow } from "date-fns";
