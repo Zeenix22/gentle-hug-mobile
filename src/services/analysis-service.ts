@@ -77,7 +77,6 @@ export async function getUserAnalyses() {
 }
 
 export async function deleteAnalysis(analysisId: string): Promise<void> {
-  // Get the analysis to find the storage path
   const { data: analysis, error: fetchError } = await supabase
     .from("analyses" as any)
     .select("storage_path")
@@ -86,12 +85,11 @@ export async function deleteAnalysis(analysisId: string): Promise<void> {
 
   if (fetchError) throw new Error(fetchError.message);
 
-  // Delete from storage
-  if (analysis?.storage_path) {
-    await supabase.storage.from("uploads").remove([(analysis as any).storage_path]);
+  const storagePath = (analysis as any)?.storage_path;
+  if (storagePath) {
+    await supabase.storage.from("uploads").remove([storagePath]);
   }
 
-  // Delete the record
   const { error } = await supabase
     .from("analyses" as any)
     .delete()
