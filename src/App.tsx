@@ -34,14 +34,14 @@ const App = () => (
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Index />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/upload" element={<Upload />} />
-              <Route path="/analysis/:id" element={<Analysis />} />
-              <Route path="/processing/:id" element={<Processing />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/profile" element={<Profile />} />
+              <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/upload" element={<ProtectedRoute><Upload /></ProtectedRoute>} />
+              <Route path="/analysis/:id" element={<ProtectedRoute><Analysis /></ProtectedRoute>} />
+              <Route path="/processing/:id" element={<ProtectedRoute><Processing /></ProtectedRoute>} />
+              <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+              <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
               <Route path="/help" element={<Help />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             </Route>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
