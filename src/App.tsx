@@ -11,6 +11,7 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Upload from "./pages/Upload";
 import Analysis from "./pages/Analysis";
+import DatasetCollection from "./pages/DatasetCollection";
 import Processing from "./pages/Processing";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
@@ -42,6 +43,7 @@ const App = () => (
               <Route path="/profile" element={<Profile />} />
               <Route path="/help" element={<Help />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/dataset" element={<DatasetCollection />} />
             </Route>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />

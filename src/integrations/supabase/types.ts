@@ -92,6 +92,36 @@ export type Database = {
         }
         Relationships: []
       }
+      training_dataset: {
+        Row: {
+          created_at: string
+          file_name: string
+          id: string
+          label: string
+          notes: string | null
+          storage_path: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          id?: string
+          label: string
+          notes?: string | null
+          storage_path: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          id?: string
+          label?: string
+          notes?: string | null
+          storage_path?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

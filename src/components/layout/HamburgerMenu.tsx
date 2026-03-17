@@ -1,5 +1,5 @@
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Shield, Settings, Info, Lock, FileText, LogOut } from "lucide-react";
+import { Shield, Settings, Info, Lock, FileText, LogOut, Database } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,6 +10,7 @@ interface HamburgerMenuProps {
 }
 
 const menuItems = [
+  { label: "Dataset Collection", icon: Database, path: "/dataset" },
   { label: "Settings", icon: Settings, path: "/settings" },
   { label: "About", icon: Info, path: "/help" },
   { label: "Privacy Policy", icon: Lock, path: "/settings" },
