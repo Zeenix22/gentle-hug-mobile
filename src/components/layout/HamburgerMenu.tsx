@@ -10,6 +10,7 @@ interface HamburgerMenuProps {
 }
 
 const menuItems = [
+  { label: "Dataset Collection", icon: Database, path: "/dataset" },
   { label: "Settings", icon: Settings, path: "/settings" },
   { label: "About", icon: Info, path: "/help" },
   { label: "Privacy Policy", icon: Lock, path: "/settings" },
