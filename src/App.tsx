@@ -11,6 +11,7 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Upload from "./pages/Upload";
 import Analysis from "./pages/Analysis";
+import DatasetCollection from "./pages/DatasetCollection";
 import Processing from "./pages/Processing";
 import History from "./pages/History";
 import Profile from "./pages/Profile";
