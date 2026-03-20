@@ -525,9 +525,8 @@ function runHeuristicAnalysis(
 
   let authenticityLevel: string;
   let summary: string;
-  if (score >= 80) { authenticityLevel = "authentic"; summary = "This file appears to be authentic. No significant signs of manipulation or AI generation were detected."; }
-  else if (score >= 55) { authenticityLevel = "suspicious"; summary = "Some indicators suggest this file may have been modified or processed. Manual verification is recommended."; }
-  else if (score >= 30) { authenticityLevel = "manipulated"; summary = "Multiple indicators suggest this file has been significantly manipulated, edited, or artificially generated."; }
+  if (score >= 75) { authenticityLevel = "authentic"; summary = "This file appears to be authentic. No significant signs of manipulation or AI generation were detected."; }
+  else if (score >= 35) { authenticityLevel = "suspicious"; summary = "Some indicators suggest this file may have been modified or processed. Manual verification is recommended."; }
   else { authenticityLevel = "manipulated"; summary = "Strong evidence of manipulation or artificial generation. This file should not be considered authentic."; }
 
   return { confidenceScore: score, authenticityLevel, summary, details, exifData, hashInfo: { sha256: "", md5: "n/a", isModified: authenticityLevel !== "authentic" } };
@@ -652,15 +651,12 @@ Deno.serve(async (req) => {
         result.confidenceScore = Math.max(0, Math.min(100, blendedScore));
 
         // Re-determine authenticity level based on blended score
-        if (result.confidenceScore >= 80) {
+        if (result.confidenceScore >= 75) {
           result.authenticityLevel = "authentic";
           result.summary = "AI vision analysis and heuristic checks both indicate this image is authentic with no significant signs of manipulation.";
-        } else if (result.confidenceScore >= 55) {
+        } else if (result.confidenceScore >= 35) {
           result.authenticityLevel = "suspicious";
-          result.summary = "AI analysis detected some indicators of possible modification or processing. Manual review is recommended.";
-        } else if (result.confidenceScore >= 30) {
-          result.authenticityLevel = "manipulated";
-          result.summary = "AI analysis found significant evidence of manipulation or artificial generation in this image.";
+          result.summary = "AI analysis detected indicators of possible modification or processing. Manual review is recommended.";
         } else {
           result.authenticityLevel = "manipulated";
           result.summary = "AI analysis strongly indicates this image is AI-generated or heavily manipulated. It should not be considered authentic.";
