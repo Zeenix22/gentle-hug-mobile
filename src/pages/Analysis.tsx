@@ -181,7 +181,7 @@ const Analysis = () => {
           : result.confidenceScore;
 
         const scoreBarColor = (score: number) =>
-          score >= 80 ? "bg-success" : score >= 55 ? "bg-warning" : "bg-destructive";
+          score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
 
         return (
           <Card className="border-border animate-fade-in" style={{ animationDelay: "0.12s", opacity: 0 }}>
