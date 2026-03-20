@@ -525,9 +525,8 @@ function runHeuristicAnalysis(
 
   let authenticityLevel: string;
   let summary: string;
-  if (score >= 80) { authenticityLevel = "authentic"; summary = "This file appears to be authentic. No significant signs of manipulation or AI generation were detected."; }
-  else if (score >= 55) { authenticityLevel = "suspicious"; summary = "Some indicators suggest this file may have been modified or processed. Manual verification is recommended."; }
-  else if (score >= 30) { authenticityLevel = "manipulated"; summary = "Multiple indicators suggest this file has been significantly manipulated, edited, or artificially generated."; }
+  if (score >= 75) { authenticityLevel = "authentic"; summary = "This file appears to be authentic. No significant signs of manipulation or AI generation were detected."; }
+  else if (score >= 35) { authenticityLevel = "suspicious"; summary = "Some indicators suggest this file may have been modified or processed. Manual verification is recommended."; }
   else { authenticityLevel = "manipulated"; summary = "Strong evidence of manipulation or artificial generation. This file should not be considered authentic."; }
 
   return { confidenceScore: score, authenticityLevel, summary, details, exifData, hashInfo: { sha256: "", md5: "n/a", isModified: authenticityLevel !== "authentic" } };
