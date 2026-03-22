@@ -247,7 +247,7 @@ const Analysis = () => {
                     <span className="text-xs font-bold text-primary">{result.confidenceScore}/100</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Weighted: 40% heuristic + 60% AI vision
+                    Weighted: 30% heuristic + 70% AI vision
                   </p>
                 </div>
               )}
