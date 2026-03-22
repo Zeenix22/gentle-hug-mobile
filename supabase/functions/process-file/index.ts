@@ -47,6 +47,162 @@ function computeByteEntropy(uint8: Uint8Array, sampleSize = 65536): number {
   return entropy;
 }
 
+/** Compute regional entropy variance — manipulated images often have inconsistent entropy across regions */
+function computeRegionalEntropyVariance(uint8: Uint8Array, numRegions = 8): { variance: number; regions: number[] } {
+  const regionSize = Math.floor(uint8.length / numRegions);
+  const entropies: number[] = [];
+  for (let r = 0; r < numRegions; r++) {
+    const start = r * regionSize;
+    const region = uint8.slice(start, start + regionSize);
+    entropies.push(computeByteEntropy(region, regionSize));
+  }
+  const mean = entropies.reduce((a, b) => a + b, 0) / entropies.length;
+  const variance = entropies.reduce((sum, e) => sum + (e - mean) ** 2, 0) / entropies.length;
+  return { variance, regions: entropies };
+}
+
+/** Detect double JPEG compression by analyzing quantization tables */
+function analyzeJpegQuantization(uint8: Uint8Array): { tables: number[][]; isDoubleCompressed: boolean; quality: number | null; suspiciousPatterns: string[] } {
+  const tables: number[][] = [];
+  const suspicious: string[] = [];
+  let quality: number | null = null;
+
+  // Scan for DQT markers (0xFF 0xDB)
+  for (let i = 0; i < Math.min(uint8.length, 65536) - 1; i++) {
+    if (uint8[i] === 0xFF && uint8[i + 1] === 0xDB) {
+      const segLen = (uint8[i + 2] << 8) | uint8[i + 3];
+      let offset = i + 4;
+      while (offset < i + 2 + segLen && offset + 64 < uint8.length) {
+        const precisionAndId = uint8[offset];
+        offset++;
+        const table: number[] = [];
+        for (let j = 0; j < 64; j++) {
+          table.push(uint8[offset + j]);
+        }
+        tables.push(table);
+        offset += 64;
+
+        // Estimate JPEG quality from luminance quantization table (table 0)
+        if (tables.length === 1) {
+          const q50Lum = [16,11,10,16,24,40,51,61,12,12,14,19,26,58,60,55,14,13,16,24,40,57,69,56,14,17,22,29,51,87,80,62,18,22,37,56,68,109,103,77,24,35,55,64,81,104,113,92,49,64,78,87,103,121,120,101,72,92,95,98,112,100,103,99];
+          let sum = 0;
+          for (let j = 0; j < 64; j++) {
+            if (q50Lum[j] > 0) sum += table[j] / q50Lum[j];
+          }
+          const avgRatio = sum / 64;
+          quality = Math.round(Math.max(1, Math.min(100, avgRatio <= 1 ? 100 - (avgRatio * 50) : 200 - (avgRatio * 100))));
+        }
+      }
+    }
+  }
+
+  // Check for double compression indicators
+  if (tables.length >= 2) {
+    // Compare luminance and chrominance tables for unusual patterns
+    const lum = tables[0];
+    const chr = tables[1] || [];
+    
+    // In double-compressed images, quantization values often show "ghost" artifacts
+    // where values cluster at multiples suggesting re-quantization
+    let multipleCount = 0;
+    for (let j = 0; j < Math.min(lum.length, 64); j++) {
+      if (lum[j] > 1 && lum[j] % 2 === 0 && lum[j] <= 16) multipleCount++;
+    }
+    if (multipleCount > 40) {
+      suspicious.push("Quantization values suggest re-compression");
+    }
+  }
+
+  // Check for non-standard quantization tables (common in edited images)
+  if (tables.length > 0) {
+    const allOnes = tables[0].every(v => v === 1);
+    if (allOnes) {
+      suspicious.push("All-ones quantization table (lossless or synthetic)");
+    }
+    
+    const hasZeros = tables[0].some(v => v === 0);
+    if (hasZeros) {
+      suspicious.push("Zero values in quantization table (corrupted or tampered)");
+    }
+  }
+
+  return { 
+    tables, 
+    isDoubleCompressed: suspicious.length > 0, 
+    quality, 
+    suspiciousPatterns: suspicious 
+  };
+}
+
+/** Detect JPEG grid misalignment (indicator of splicing) */
+function detectJpegGridMisalignment(uint8: Uint8Array): { misaligned: boolean; confidence: number } {
+  // Count SOF markers to detect re-encoding
+  let sofCount = 0;
+  let sosCount = 0;
+  for (let i = 0; i < Math.min(uint8.length, 131072) - 1; i++) {
+    if (uint8[i] === 0xFF) {
+      if (uint8[i + 1] === 0xC0 || uint8[i + 1] === 0xC2) sofCount++;
+      if (uint8[i + 1] === 0xDA) sosCount++;
+    }
+  }
+  // Multiple SOF/SOS markers can indicate manipulation
+  const misaligned = sofCount > 1 || sosCount > 1;
+  return { misaligned, confidence: misaligned ? 0.7 : 0 };
+}
+
+/** Enhanced PNG chunk analysis for tampering */
+function analyzePngChunks(uint8: Uint8Array): { suspicious: string[]; editingSoftware: string | null; hasAncillary: boolean } {
+  const suspicious: string[] = [];
+  let editingSoftware: string | null = null;
+  let hasAncillary = false;
+  const decoder = new TextDecoder();
+  let offset = 8;
+  const knownChunks = new Set(["IHDR","PLTE","IDAT","IEND","tEXt","iTXt","zTXt","pHYs","tIME","cHRM","gAMA","iCCP","sRGB","sBIT","bKGD","hIST","tRNS","sPLT"]);
+  let idatCount = 0;
+
+  while (offset + 8 < uint8.length && offset < 524288) {
+    const chunkLen = (uint8[offset] << 24) | (uint8[offset + 1] << 16) | (uint8[offset + 2] << 8) | uint8[offset + 3];
+    const chunkType = decoder.decode(uint8.slice(offset + 4, offset + 8));
+    
+    if (chunkType === "IDAT") idatCount++;
+    if (!knownChunks.has(chunkType) && /^[a-zA-Z]{4}$/.test(chunkType)) {
+      hasAncillary = true;
+    }
+
+    if (chunkType === "tEXt" || chunkType === "iTXt") {
+      const chunkData = uint8.slice(offset + 8, offset + 8 + Math.min(chunkLen, 1024));
+      const nullIdx = chunkData.indexOf(0);
+      if (nullIdx > 0) {
+        const key = decoder.decode(chunkData.slice(0, nullIdx)).toLowerCase();
+        const val = decoder.decode(chunkData.slice(nullIdx + 1, Math.min(nullIdx + 300, chunkData.length))).toLowerCase();
+        const editTools = ["photoshop", "gimp", "paint.net", "pixlr", "canva", "affinity", "krita"];
+        const aiTools = ["stable diffusion", "midjourney", "dall-e", "comfyui", "automatic1111", "novelai", "dreamstudio", "invoke", "a1111"];
+        
+        if (editTools.some(t => val.includes(t) || key.includes(t))) {
+          editingSoftware = val.substring(0, 80);
+          suspicious.push(`Editing software detected: ${editingSoftware}`);
+        }
+        if (aiTools.some(t => val.includes(t) || key.includes(t))) {
+          suspicious.push(`AI generation tool detected in metadata`);
+        }
+        if (key === "parameters" || key === "prompt" || key === "negative_prompt") {
+          suspicious.push(`AI generation parameters found (${key})`);
+        }
+      }
+    }
+
+    if (chunkType === "IEND") break;
+    offset += 12 + chunkLen;
+  }
+
+  // Unusual number of IDAT chunks can indicate re-encoding
+  if (idatCount > 50) {
+    suspicious.push(`Unusually high IDAT chunk count (${idatCount}) — possible re-encoding`);
+  }
+
+  return { suspicious, editingSoftware, hasAncillary };
+}
+
 function extractJpegExif(uint8: Uint8Array): Record<string, string> {
   const exif: Record<string, string> = { Format: "JPEG" };
   let app1Offset = -1;
@@ -151,6 +307,46 @@ function extractPngMetadata(uint8: Uint8Array): Record<string, string> {
   return meta;
 }
 
+// ─── Python Microservice Integration ────────────────────────────────────────
+
+interface PythonAnalysisResult {
+  ela_score: number;
+  noise_score: number;
+  clone_score: number;
+  edge_score: number;
+  overall_score: number;
+  findings: { category: string; finding: string; severity: string; description: string }[];
+}
+
+async function callPythonService(uint8: Uint8Array, fileName: string): Promise<PythonAnalysisResult | null> {
+  const pythonUrl = Deno.env.get("PYTHON_ANALYSIS_URL");
+  if (!pythonUrl) {
+    console.log("PYTHON_ANALYSIS_URL not set — skipping Python deep analysis");
+    return null;
+  }
+
+  try {
+    const base64 = btoa(String.fromCharCode(...uint8.slice(0, Math.min(uint8.length, 10_000_000))));
+    
+    const response = await fetch(`${pythonUrl}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_base64: base64, file_name: fileName }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Python service error:", response.status, errText);
+      return null;
+    }
+
+    return await response.json() as PythonAnalysisResult;
+  } catch (err) {
+    console.error("Python service call failed:", err);
+    return null;
+  }
+}
+
 // ─── AI Vision Analysis ─────────────────────────────────────────────────────
 
 interface AIAnalysisResult {
@@ -167,6 +363,7 @@ async function analyzeImageWithAI(
   mimeType: string,
   fileName: string,
   heuristicFindings: string,
+  pythonFindings: string,
 ): Promise<AIAnalysisResult | null> {
   const apiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!apiKey) {
@@ -174,92 +371,118 @@ async function analyzeImageWithAI(
     return null;
   }
 
-  // Convert image to base64 for vision model
   const base64 = btoa(String.fromCharCode(...uint8.slice(0, Math.min(uint8.length, 4_000_000))));
   const mediaType = mimeType || "image/jpeg";
 
-  const systemPrompt = `You are an expert digital forensics analyst with 15+ years of experience in image authenticity verification, trained on thousands of authentic and manipulated images.
+  const systemPrompt = `You are an expert digital forensics analyst with 20+ years of experience in image authenticity verification, deepfake detection, and manipulation forensics. You have been trained on tens of thousands of authentic, manipulated, and AI-generated images.
 
 ## YOUR TASK
-Analyze the provided image and assign an authenticity_score from 0-100 using the strict scoring rubric below. Be calibrated: most real photos score 70-95, most AI images score 5-30.
+Analyze the provided image and assign an authenticity_score from 0-100 using the STRICT scoring rubric below. You MUST be highly calibrated and precise.
 
-## SCORING RUBRIC (follow precisely)
+## CRITICAL SCORING RULES
+- Start at baseline 50
+- Real unedited photos with EXIF: typically 75-95
+- Real photos with minor edits (crop, brightness): typically 55-75
+- Screenshots or re-shared: typically 45-65
+- Photoshopped / spliced: typically 15-40
+- AI-generated images: typically 5-25
+- NEVER give above 90 unless overwhelming authentic evidence
+- NEVER give below 10 unless blatantly synthetic with 3+ severe artifacts
 
-### Authentic indicators (+points toward 100):
-- Rich, consistent EXIF/camera metadata (camera make, model, lens, GPS): +10-15
-- Natural noise grain pattern consistent across the frame: +5-10
-- Consistent lighting direction and shadow geometry: +5-10
-- Natural depth-of-field with realistic bokeh: +5
-- Proper chromatic aberration and lens distortion at edges: +3-5
-- Realistic skin texture with pores, blemishes, fine hairs: +5
-- Consistent JPEG compression artifacts (single-generation): +3-5
-- Natural motion blur or slight imperfections: +3
+## AUTHENTIC INDICATORS (evidence pushes score UP)
 
-### AI-generation red flags (-points toward 0):
-- Distorted or extra fingers/limbs/teeth: -25-40
-- Warped, illegible, or nonsensical text/signage: -20-30
-- Unnatural skin smoothness (plastic/wax appearance): -15-25
-- Inconsistent or impossible reflections in eyes/glass/water: -15-20
-- Repeating micro-patterns or texture tiling: -10-20
-- Over-perfect symmetry in natural scenes: -10-15
-- Background objects that dissolve or merge illogically: -10-15
-- Inconsistent ear/jewelry/accessory details between sides: -5-10
-- Overly saturated or HDR-like lighting without realistic falloff: -5-10
+### Strong (+10-15 each):
+- Rich EXIF with camera make/model/lens/GPS coordinates
+- Natural sensor noise consistent with stated ISO
+- Consistent directional lighting with physically correct shadows
+- Natural depth-of-field with realistic bokeh circles
+- Chromatic aberration at edges (lens physics)
 
-### Manipulation red flags (-points toward 0):
-- Cloning artifacts (repeated pixel patches): -20-30
-- Splicing edges (mismatched noise, lighting, or resolution at boundaries): -20-30
-- Content-aware fill artifacts (smeared or blended regions): -15-20
-- Double JPEG compression artifacts (grid misalignment): -15-20
-- Inconsistent shadow directions between objects: -15-20
-- Copy-move detection (identical regions in different positions): -15-25
-- Metadata shows editing software (Photoshop, GIMP, etc.): -10-15
-- EXIF stripped but file claims to be camera original: -5-10
-- Re-compression artifacts inconsistent with stated quality: -5-10
+### Moderate (+5-8 each):
+- Realistic skin with pores, blemishes, fine hairs, veins
+- Single-generation JPEG compression (consistent DCT blocks)
+- Natural motion blur or slight camera shake
+- Consistent perspective geometry
 
-## FEW-SHOT EXAMPLES
+### Weak (+2-3 each):
+- Reasonable file size for resolution
+- Normal byte entropy distribution
+- Minor lens flare or optical artifacts
 
-### Example 1: Authentic photo (Score: 88)
-- EXIF present: Canon EOS R5, 50mm f/1.4, ISO 400, GPS coordinates
-- Natural grain pattern consistent with ISO 400 sensor noise
-- Consistent warm directional lighting from upper-left
-- Minor chromatic aberration at frame edges (expected for this lens)
-- Skin shows natural pores, slight redness, fine hairs
-→ Reasoning: "Strong camera metadata with consistent optical characteristics. Noise grain matches the stated ISO. Lighting and shadows are physically consistent. Minor lens aberrations confirm optical capture rather than rendering."
+## AI GENERATION RED FLAGS (evidence pushes score DOWN)
 
-### Example 2: AI-generated image (Score: 12)
-- No EXIF metadata whatsoever
-- Skin appears unnaturally smooth with no visible pores
-- Background buildings have warped geometry and illegible signage
-- Left hand has 6 fingers; right earring differs from left
-- Reflections in sunglasses don't match the scene
-→ Reasoning: "Multiple hallmark AI artifacts: anatomical errors (6 fingers), asymmetric accessories, smooth skin lacking texture, warped architecture, and impossible reflections. No metadata supports camera origin."
+### Severe (-25-40 each):
+- Wrong number of fingers, fused/extra digits
+- Warped, illegible, or nonsensical text in signage/writing
+- Impossible reflections in eyes/glass/mirrors
 
-### Example 3: Manipulated photo (Score: 35)
-- EXIF shows Photoshop CS6 as last editor
-- Main subject lighting comes from the right; added person lit from left
-- Noise grain around spliced person is finer than background
-- Edge artifacts visible at boundary between original and inserted content
-- JPEG grid shows double-compression misalignment in one region
-→ Reasoning: "Clear splice detected: lighting direction mismatch between subjects, inconsistent noise levels at boundaries, double-compression artifacts in the manipulated region, and editing software confirmed in metadata."
+### Major (-15-25 each):
+- Unnaturally smooth skin (plastic/wax look, no pores)
+- Repeating micro-patterns or texture tiling
+- Background objects dissolving or merging illogically
+- Asymmetric earrings/accessories/facial features that should match
+- Teeth that look uniform, merged, or unnaturally perfect
 
-### Example 4: Screenshot / re-shared (Score: 60)
-- No camera EXIF, but file structure is valid
-- UI elements visible (status bar, app chrome)
-- Single JPEG compression, no splice indicators
-- Content appears to be a capture of another image on screen
-→ Reasoning: "Screenshot of displayed content—not manipulated, but not an original capture either. No editing indicators, but provenance cannot be fully verified. The original source image quality is degraded by the re-capture process."
+### Minor (-5-15 each):
+- Over-perfect symmetry in natural scenes
+- Overly saturated HDR-like lighting without realistic falloff
+- Hair strands that merge or terminate unnaturally
+
+## MANIPULATION RED FLAGS (evidence pushes score DOWN)
+
+### Severe (-25-35 each):
+- Visible splicing edges (sharp noise/resolution boundaries)
+- Clone-stamp artifacts (identical pixel patches in different locations)
+- Content-aware fill ghosts (smeared/blended impossible regions)
+
+### Major (-15-25 each):
+- Double JPEG compression grid misalignment
+- Inconsistent shadow directions between objects
+- Mismatched noise grain levels between regions
+- ELA (Error Level Analysis) inconsistencies
+
+### Minor (-5-15 each):
+- Metadata shows editing software (Photoshop, GIMP, Lightroom)
+- EXIF stripped from what claims to be camera original
+- Re-compression artifacts inconsistent with quality
+
+## FEW-SHOT CALIBRATION EXAMPLES
+
+### Example 1: Authentic DSLR photo → Score: 87
+Evidence: Canon EOS R5 EXIF, 50mm f/1.4, ISO 400, GPS coords, natural grain matching ISO, consistent warm lighting from upper-left, minor CA at edges, skin with pores and slight redness.
+Reasoning: "Strong camera metadata with consistent optical characteristics. Sensor noise matches stated ISO 400. Lighting geometry is physically consistent. Lens aberrations confirm optical capture."
+
+### Example 2: AI-generated portrait → Score: 14
+Evidence: No EXIF, skin poreless and wax-like, background buildings have warped geometry, left hand has 6 fingers, earrings asymmetric, reflections in glasses don't match scene.
+Reasoning: "Multiple hallmark AI artifacts: anatomical errors (6 fingers), asymmetric accessories, impossibly smooth skin, warped architecture, and physically impossible reflections. Zero metadata."
+
+### Example 3: Photoshop splice → Score: 28
+Evidence: EXIF shows Photoshop CS6, subject lit from right but inserted person lit from left, noise grain mismatch at boundary, double-compression artifacts in spliced region, ELA shows bright edges around inserted element.
+Reasoning: "Clear splice: lighting direction mismatch, inconsistent noise at boundaries, double-compression in manipulated region, editing software in metadata."
+
+### Example 4: Screenshot of photo → Score: 58
+Evidence: No camera EXIF, UI chrome visible, single compression, no splice indicators, content is screen-captured photo.
+Reasoning: "Screenshot—not manipulated but not original either. No editing indicators but provenance unverifiable."
+
+### Example 5: Lightly edited authentic → Score: 68
+Evidence: EXIF shows Lightroom, original camera data intact, brightness/contrast adjusted, no pixel-level manipulation, consistent noise.
+Reasoning: "Genuine photograph with standard post-processing adjustments. No pixel manipulation detected, but editing software presence prevents full authentic rating."
+
+## ADDITIONAL CONTEXT
+Consider the heuristic findings AND the Python deep-analysis findings (ELA, noise analysis, clone detection) provided alongside your visual inspection. These provide quantitative evidence — weigh them seriously.
 
 ## RULES
-- Start from a baseline of 50, then adjust up/down based on evidence found
-- Never give 95-100 unless overwhelming authentic evidence exists
-- Never give 0-5 unless image is obviously synthetic with multiple severe artifacts
-- If uncertain, bias toward the 40-60 range and explain what's ambiguous
-- Always cite specific visual evidence, never make vague claims
-- Consider the heuristic findings provided alongside your visual analysis`;
+- Cite SPECIFIC visual evidence for every claim
+- Never make vague statements like "looks authentic" without evidence
+- If uncertain, bias toward 40-60 and explain ambiguity
+- Weight Python ELA/noise analysis heavily when available`;
 
-  const userPrompt = `Analyze this image "${fileName}" for authenticity. Here are preliminary heuristic findings:
+  const userPrompt = `Analyze this image "${fileName}" for authenticity.
+
+Heuristic findings:
 ${heuristicFindings}
+
+${pythonFindings ? `Python deep-analysis findings:\n${pythonFindings}` : "Python deep analysis: not available"}
 
 Provide your analysis using the suggest_authenticity_analysis tool.`;
 
@@ -271,7 +494,7 @@ Provide your analysis using the suggest_authenticity_analysis tool.`;
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-pro",
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -282,6 +505,7 @@ Provide your analysis using the suggest_authenticity_analysis tool.`;
             ],
           },
         ],
+        reasoning: { effort: "high" },
         tools: [
           {
             type: "function",
@@ -306,11 +530,11 @@ Provide your analysis using the suggest_authenticity_analysis tool.`;
                   manipulation_types: {
                     type: "array",
                     items: { type: "string" },
-                    description: "Types of manipulation detected, e.g. 'splicing', 'cloning', 'retouching', 'AI generation'",
+                    description: "Types of manipulation detected, e.g. 'splicing', 'cloning', 'retouching', 'AI generation', 'content-aware fill'",
                   },
                   reasoning: {
                     type: "string",
-                    description: "Detailed explanation of the analysis reasoning",
+                    description: "Detailed explanation citing specific visual evidence found",
                   },
                   findings: {
                     type: "array",
@@ -430,6 +654,7 @@ function runHeuristicAnalysis(
     }
   }
 
+  // Global entropy
   const entropy = computeByteEntropy(uint8);
   if (fileType === "image") {
     if (entropy < 5.0) {
@@ -440,18 +665,55 @@ function runHeuristicAnalysis(
     } else {
       details.push({ category: "Entropy Analysis", finding: "Normal entropy", severity: "low", description: `Byte entropy is ${entropy.toFixed(2)}/8.0 — within expected range for this file type.` });
     }
+
+    // Regional entropy variance — NEW
+    if (uint8.length > 32768) {
+      const { variance } = computeRegionalEntropyVariance(uint8);
+      if (variance > 1.5) {
+        details.push({ category: "Regional Entropy", finding: "High entropy variance across regions", severity: "high", description: `Entropy variance of ${variance.toFixed(3)} across file regions is abnormally high, suggesting spliced or composited content with different compression levels.` });
+        score -= 15;
+      } else if (variance > 0.8) {
+        details.push({ category: "Regional Entropy", finding: "Moderate entropy variance", severity: "medium", description: `Entropy variance of ${variance.toFixed(3)} — some inconsistency detected between file regions.` });
+        score -= 7;
+      } else {
+        details.push({ category: "Regional Entropy", finding: "Consistent entropy", severity: "low", description: `Entropy variance of ${variance.toFixed(3)} — uniform compression throughout the file.` });
+      }
+    }
   }
 
   let exifData: Record<string, string> = {};
   if (fileType === "image") {
     if (uint8[0] === 0xFF && uint8[1] === 0xD8) {
+      // JPEG
       exifData = extractJpegExif(uint8);
+
+      // JPEG quantization analysis — NEW
+      const quantResult = analyzeJpegQuantization(uint8);
+      if (quantResult.quality !== null) {
+        exifData["JPEG Quality"] = `~${quantResult.quality}%`;
+        if (quantResult.quality < 50) {
+          details.push({ category: "Compression Quality", finding: `Low JPEG quality (~${quantResult.quality}%)`, severity: "medium", description: "Low quality suggests heavy re-compression, which degrades authenticity and may hide manipulation artifacts." });
+          score -= 8;
+        }
+      }
+      if (quantResult.isDoubleCompressed) {
+        details.push({ category: "Double Compression", finding: "Quantization anomalies detected", severity: "high", description: `${quantResult.suspiciousPatterns.join(". ")}. Double compression is a strong indicator of image manipulation — the image was likely saved, edited, and re-saved.` });
+        score -= 20;
+      }
+
+      // JPEG grid misalignment — NEW
+      const gridResult = detectJpegGridMisalignment(uint8);
+      if (gridResult.misaligned) {
+        details.push({ category: "JPEG Grid Analysis", finding: "Multiple frame markers detected", severity: "high", description: "Multiple SOF/SOS markers found, suggesting the image may have been re-encoded or contains spliced regions with misaligned JPEG grids." });
+        score -= 15;
+      }
+
       if (exifData["EXIF Data"] === "Present") {
         details.push({ category: "Metadata Integrity", finding: "EXIF data present", severity: "low", description: "Original camera metadata found. This is a strong indicator of an authentic, unprocessed photo." });
         score += 5;
         if (exifData["Software"]) {
           const sw = exifData["Software"].toLowerCase();
-          const editSoftware = ["photoshop", "gimp", "lightroom", "snapseed", "picsart", "canva", "afterlight"];
+          const editSoftware = ["photoshop", "gimp", "lightroom", "snapseed", "picsart", "canva", "afterlight", "pixlr", "affinity", "paint.net", "krita"];
           if (editSoftware.some((s) => sw.includes(s))) {
             details.push({ category: "Editing Software", finding: `Edited with ${exifData["Software"]}`, severity: "medium", description: `The image was last processed by "${exifData["Software"]}", indicating it has been edited.` });
             score -= 15;
@@ -468,16 +730,29 @@ function runHeuristicAnalysis(
         score -= 10;
       }
     } else if (uint8[0] === 0x89 && uint8[1] === 0x50) {
+      // PNG — enhanced chunk analysis
       exifData = extractPngMetadata(uint8);
-      const aiMarkers = ["stable diffusion", "midjourney", "dall-e", "comfyui", "automatic1111", "novelai", "dreamstudio"];
-      const allMeta = Object.entries(exifData).map(([k, v]) => `${k}:${v}`.toLowerCase()).join(" ");
-      if (aiMarkers.some((m) => allMeta.includes(m))) {
-        details.push({ category: "AI Generation", finding: "AI generation markers detected", severity: "high", description: "The file's metadata contains references to AI image generation tools. This image is very likely AI-generated." });
-        score -= 35;
-      } else if (exifData["parameters"]) {
-        details.push({ category: "AI Generation", finding: "Generation parameters found", severity: "high", description: "The image contains embedded generation parameters typical of AI image generators like Stable Diffusion." });
-        score -= 35;
-      } else {
+      const pngAnalysis = analyzePngChunks(uint8);
+
+      if (pngAnalysis.editingSoftware) {
+        details.push({ category: "Editing Software", finding: `Edited: ${pngAnalysis.editingSoftware}`, severity: "medium", description: `PNG metadata indicates editing software was used.` });
+        score -= 15;
+      }
+
+      for (const finding of pngAnalysis.suspicious) {
+        if (finding.includes("AI generation")) {
+          details.push({ category: "AI Generation", finding: "AI generation markers detected", severity: "high", description: finding });
+          score -= 35;
+        } else if (finding.includes("parameters")) {
+          details.push({ category: "AI Generation", finding: "Generation parameters found", severity: "high", description: finding });
+          score -= 35;
+        } else if (finding.includes("IDAT")) {
+          details.push({ category: "PNG Structure", finding: "Unusual chunk structure", severity: "medium", description: finding });
+          score -= 8;
+        }
+      }
+
+      if (pngAnalysis.suspicious.length === 0 && !pngAnalysis.editingSoftware) {
         details.push({ category: "AI Generation", finding: "No AI markers detected", severity: "low", description: "No known AI generation tool signatures found in the file metadata." });
       }
     } else if (uint8[0] === 0x47 && uint8[1] === 0x49) {
@@ -497,6 +772,7 @@ function runHeuristicAnalysis(
     details.push({ category: "Video Analysis", finding: "Container format verified", severity: "low", description: `Valid ${format.toUpperCase()} container structure detected. Deep frame analysis requires specialized tooling.` });
   }
 
+  // Copy-move detection
   if (fileType === "image" && uint8.length > 10000) {
     const blockSize = 64;
     const sampleRegion = uint8.slice(Math.floor(uint8.length * 0.2), Math.min(Math.floor(uint8.length * 0.8), uint8.length));
@@ -619,12 +895,38 @@ Deno.serve(async (req) => {
 
     // Run AI vision analysis for images
     if (analysis.file_type === "image") {
+      // Call Python microservice for deep analysis (ELA, noise, clone detection)
+      const pythonResult = await callPythonService(uint8, analysis.file_name);
+      let pythonSummary = "";
+
+      if (pythonResult) {
+        pythonSummary = pythonResult.findings.map(f => `[${f.severity}] ${f.category}: ${f.finding} — ${f.description}`).join("\n");
+
+        // Merge Python findings
+        for (const f of pythonResult.findings) {
+          result.details.push({
+            category: `Deep Analysis: ${f.category}`,
+            finding: f.finding,
+            severity: f.severity as "low" | "medium" | "high",
+            description: f.description,
+          });
+        }
+
+        result.exifData["ELA Score"] = `${pythonResult.ela_score}/100`;
+        result.exifData["Noise Consistency"] = `${pythonResult.noise_score}/100`;
+        result.exifData["Clone Detection"] = `${pythonResult.clone_score}/100`;
+        result.exifData["Deep Analysis"] = "Completed";
+
+        // Factor Python score into heuristic (adjust heuristic before blending with AI)
+        const pythonAdjustment = Math.round((pythonResult.overall_score - 50) * 0.3);
+        result.confidenceScore = Math.max(0, Math.min(100, result.confidenceScore + pythonAdjustment));
+      }
+
       const heuristicSummary = result.details.map((d) => `[${d.severity}] ${d.category}: ${d.finding}`).join("\n");
 
-      const aiResult = await analyzeImageWithAI(uint8, fileData.type, analysis.file_name, heuristicSummary);
+      const aiResult = await analyzeImageWithAI(uint8, fileData.type, analysis.file_name, heuristicSummary, pythonSummary);
 
       if (aiResult) {
-        // Merge AI findings into details
         for (const f of aiResult.findings) {
           result.details.push({
             category: `AI Vision: ${f.category}`,
@@ -634,7 +936,6 @@ Deno.serve(async (req) => {
           });
         }
 
-        // Add AI reasoning as a finding
         result.details.push({
           category: "AI Vision Summary",
           finding: aiResult.isAIGenerated ? "Likely AI-generated" : aiResult.isManipulated ? "Signs of manipulation" : "Appears authentic",
@@ -646,8 +947,8 @@ Deno.serve(async (req) => {
           result.exifData["Detected Manipulations"] = aiResult.manipulationTypes.join(", ");
         }
 
-        // Blend scores: 40% heuristic + 60% AI for a more genuine score
-        const blendedScore = Math.round(result.confidenceScore * 0.4 + aiResult.aiScore * 0.6);
+        // Blend scores: 30% heuristic + 70% AI (lean more on Gemini)
+        const blendedScore = Math.round(result.confidenceScore * 0.3 + aiResult.aiScore * 0.7);
         result.confidenceScore = Math.max(0, Math.min(100, blendedScore));
 
         // Re-determine authenticity level based on blended score
@@ -664,6 +965,7 @@ Deno.serve(async (req) => {
 
         result.exifData["AI Analysis"] = "Completed";
         result.exifData["AI Score"] = `${aiResult.aiScore}/100`;
+        result.exifData["Scoring Weight"] = "30% heuristic + 70% AI";
         result.hashInfo.isModified = result.authenticityLevel !== "authentic";
       }
     }

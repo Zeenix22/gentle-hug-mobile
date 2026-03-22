@@ -177,7 +177,7 @@ const Analysis = () => {
         const aiScore = hasAI ? parseInt(aiScoreStr!.replace("/100", "")) : null;
         // Reverse-engineer heuristic score from blended: blended = heuristic*0.4 + ai*0.6
         const heuristicScore = hasAI && aiScore != null
-          ? Math.round((result.confidenceScore - aiScore * 0.6) / 0.4)
+          ? Math.round((result.confidenceScore - aiScore * 0.7) / 0.3)
           : result.confidenceScore;
 
         const scoreBarColor = (score: number) =>
@@ -247,7 +247,7 @@ const Analysis = () => {
                     <span className="text-xs font-bold text-primary">{result.confidenceScore}/100</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Weighted: 40% heuristic + 60% AI vision
+                    Weighted: 30% heuristic + 70% AI vision
                   </p>
                 </div>
               )}
