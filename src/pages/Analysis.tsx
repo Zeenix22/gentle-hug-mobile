@@ -170,15 +170,14 @@ const Analysis = () => {
         </CardContent>
       </Card>
 
-      {/* Score Breakdown: Heuristic vs AI */}
+      {/* Score Breakdown: ELA + Hugging Face */}
       {(() => {
-        const aiScoreStr = result.exifData?.["AI Score"];
-        const hasAI = !!aiScoreStr;
-        const aiScore = hasAI ? parseInt(aiScoreStr!.replace("/100", "")) : null;
-        // Reverse-engineer heuristic score from blended: blended = heuristic*0.4 + ai*0.6
-        const heuristicScore = hasAI && aiScore != null
-          ? Math.round((result.confidenceScore - aiScore * 0.7) / 0.3)
-          : result.confidenceScore;
+        const elaScoreStr = result.exifData?.["ELA Score"];
+        const hfScoreStr = result.exifData?.["HF Score"];
+        const hasELA = !!elaScoreStr;
+        const hasHF = !!hfScoreStr;
+        const elaScore = hasELA ? parseInt(elaScoreStr!.replace("/100", "")) : null;
+        const hfScore = hasHF ? parseInt(hfScoreStr!.replace("/100", "")) : null;
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
@@ -191,63 +190,71 @@ const Analysis = () => {
                 Score Breakdown
               </h2>
 
-              {/* Heuristic Score */}
+              {/* ELA Score */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Cpu className="h-3 w-3" /> Heuristic Analysis
+                    <Cpu className="h-3 w-3" /> Error Level Analysis (ELA)
                   </span>
-                  <span className="text-xs font-bold text-foreground">{Math.max(0, Math.min(100, heuristicScore))}/100</span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(heuristicScore))}
-                    style={{ width: `${Math.max(0, Math.min(100, heuristicScore))}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-muted-foreground">
-                  File structure, entropy, metadata, EXIF, copy-move detection
-                </p>
-              </div>
-
-              {/* AI Vision Score */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Eye className="h-3 w-3" /> AI Vision Analysis
-                  </span>
-                  {hasAI && aiScore != null ? (
-                    <span className="text-xs font-bold text-foreground">{aiScore}/100</span>
+                  {hasELA && elaScore != null ? (
+                    <span className="text-xs font-bold text-foreground">{elaScore}/100</span>
                   ) : (
                     <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
                   )}
                 </div>
                 <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  {hasAI && aiScore != null ? (
+                  {hasELA && elaScore != null ? (
                     <div
-                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(aiScore))}
-                      style={{ width: `${aiScore}%` }}
+                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(elaScore))}
+                      style={{ width: `${elaScore}%` }}
                     />
                   ) : (
                     <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
                   )}
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  {hasAI ? "Gemini AI visual inspection for manipulation, deepfakes & AI generation" : "AI analysis requires authenticated upload. Available for image files only."}
+                  {hasELA ? "Pixel-level error analysis, noise consistency, and clone detection" : "ELA requires the Python microservice. Configure PYTHON_ANALYSIS_URL to enable."}
                 </p>
               </div>
 
-              {/* Blended Score Formula */}
-              {hasAI && (
+              {/* Hugging Face AI Detection Score */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Eye className="h-3 w-3" /> AI Detection (Hugging Face)
+                  </span>
+                  {hasHF && hfScore != null ? (
+                    <span className="text-xs font-bold text-foreground">{hfScore}/100</span>
+                  ) : (
+                    <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
+                  )}
+                </div>
+                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                  {hasHF && hfScore != null ? (
+                    <div
+                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(hfScore))}
+                      style={{ width: `${hfScore}%` }}
+                    />
+                  ) : (
+                    <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
+                  )}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  {hasHF ? "ViT-based AI image detector — classifies images as human-created or AI-generated" : "AI detection requires HF_API_KEY. Available for image files only."}
+                </p>
+              </div>
+
+              {/* Blended Score */}
+              {(hasELA || hasHF) && (
                 <div className="pt-2 border-t border-border">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                      <Brain className="h-3 w-3" /> Blended Score
+                      <Brain className="h-3 w-3" /> Final Score
                     </span>
                     <span className="text-xs font-bold text-primary">{result.confidenceScore}/100</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Weighted: 30% heuristic + 70% AI vision
+                    {result.exifData?.["Scoring Method"] || (hasELA && hasHF ? "50% ELA + 50% Hugging Face" : hasHF ? "100% Hugging Face" : "100% ELA")}
                   </p>
                 </div>
               )}
