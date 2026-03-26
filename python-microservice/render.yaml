@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: image-forensics-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
