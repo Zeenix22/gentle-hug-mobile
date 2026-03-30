@@ -164,6 +164,24 @@ export function getMockAnalysis(id: string): AnalysisResult | undefined {
   return mockAnalysisResults.find((a) => a.id === id);
 }
 
+/** Simple deterministic hash from a string to produce stable pseudo-random numbers */
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+/** Seeded pseudo-random number generator (deterministic) */
+function seededRandom(seed: number): () => number {
+  let s = seed;
+  return () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s / 0x7fffffff;
+  };
+}
+
 /** Generate a mock analysis result from an uploaded file for unauthenticated users */
 export function generateMockAnalysis(
   id: string,
@@ -174,19 +192,23 @@ export function generateMockAnalysis(
   const isImage = fileType === "image";
   const ext = fileName.split(".").pop()?.toLowerCase() || "";
 
-  // Randomize scores to make it interesting
-  const heuristicScore = 60 + Math.floor(Math.random() * 35);
-  const aiScore = isImage ? 50 + Math.floor(Math.random() * 45) : 0;
-  const blendedScore = isImage
-    ? Math.round(heuristicScore * 0.4 + aiScore * 0.6)
-    : heuristicScore;
+  // Use file name + size as seed for deterministic results
+  const seed = simpleHash(`${fileName}-${fileSize}`);
+  const rand = seededRandom(seed);
 
-  const level = blendedScore >= 80 ? "authentic" : blendedScore >= 55 ? "suspicious" : "manipulated";
+  // Deterministic scores based on file properties
+  const elaScore = isImage ? Math.floor(rand() * 35) + 60 : 0; // 60-95
+  const hfScore = isImage ? Math.floor(rand() * 45) + 50 : 0;  // 50-95
+  const blendedScore = isImage
+    ? Math.round(elaScore * 0.5 + hfScore * 0.5)
+    : Math.floor(rand() * 35) + 60;
+
+  const level = blendedScore >= 75 ? "authentic" : blendedScore >= 35 ? "suspicious" : "manipulated";
 
   const summaryMap = {
-    authentic: "AI vision analysis and heuristic checks both indicate this file is authentic with no significant signs of manipulation.",
-    suspicious: "AI analysis detected some indicators of possible modification or processing. Manual review is recommended.",
-    manipulated: "AI analysis found significant evidence of manipulation or artificial generation.",
+    authentic: "Analysis indicates this image is authentic with high confidence. Both ELA and AI detection show no significant signs of manipulation or artificial generation.",
+    suspicious: "Analysis shows indicators of possible modification or AI generation. Manual review is recommended.",
+    manipulated: "Analysis strongly indicates this image is AI-generated or heavily manipulated. It should not be considered authentic.",
   };
 
   const details: AnalysisResult["details"] = [
@@ -196,16 +218,23 @@ export function generateMockAnalysis(
 
   if (isImage) {
     details.push(
-      { category: "Entropy Analysis", finding: "Normal entropy", severity: "low", description: "Byte entropy is 7.41/8.0 — within expected range for this file type." },
-      { category: "Copy-Move Detection", finding: "No suspicious patterns", severity: "low", description: "Block-level analysis shows normal variation consistent with authentic imagery." },
-      { category: "AI Vision: Texture Analysis", finding: heuristicScore > 75 ? "Natural textures confirmed" : "Some anomalies detected", severity: heuristicScore > 75 ? "low" : "medium", description: heuristicScore > 75 ? "Textures are consistent with real-world photography." : "Some texture regions show patterns that could indicate processing." },
-      { category: "AI Vision: Lighting", finding: aiScore > 70 ? "Consistent lighting" : "Minor inconsistencies", severity: aiScore > 70 ? "low" : "medium", description: aiScore > 70 ? "Shadow directions and highlight falloff are physically plausible." : "Some lighting angles appear slightly inconsistent across regions." },
-      { category: "AI Vision Summary", finding: level === "authentic" ? "Appears authentic" : level === "suspicious" ? "Inconclusive — needs review" : "Signs of manipulation", severity: level === "authentic" ? "low" : level === "suspicious" ? "medium" : "high", description: `AI vision analysis completed with a score of ${aiScore}/100. ${summaryMap[level]}` },
+      { category: "ELA: Error Level Analysis", finding: elaScore > 70 ? "Low error levels" : "Elevated error levels", severity: elaScore > 70 ? "low" : "medium", description: `ELA score: ${elaScore}/100. ${elaScore > 70 ? "Error levels are consistent across the image." : "Some regions show inconsistent error levels."}` },
+      { category: "ELA: Noise Consistency", finding: elaScore > 65 ? "Consistent noise" : "Noise anomalies", severity: elaScore > 65 ? "low" : "medium", description: "Noise pattern analysis across image regions." },
+      {
+        category: "AI Detection (Hugging Face)",
+        finding: hfScore > 70 ? `Image classified as human-created (${hfScore}% confidence)` : `Image classified as AI-generated (${100 - hfScore}% confidence)`,
+        severity: hfScore > 70 ? "low" : hfScore > 50 ? "medium" : "high",
+        description: `The AI image detector model identifies this image as ${hfScore > 70 ? "human-created/authentic" : "artificially generated"}.`,
+      },
     );
   }
 
   const fileSizeStr = fileSize >= 1048576 ? `${(fileSize / 1048576).toFixed(1)} MB` : `${(fileSize / 1024).toFixed(1)} KB`;
-  const sha256 = Array.from(crypto.getRandomValues(new Uint8Array(32))).map(b => b.toString(16).padStart(2, "0")).join("");
+  // Deterministic SHA-256 from seed
+  const sha256Bytes = [];
+  const hashRand = seededRandom(seed + 1);
+  for (let i = 0; i < 32; i++) sha256Bytes.push(Math.floor(hashRand() * 256).toString(16).padStart(2, "0"));
+  const sha256 = sha256Bytes.join("");
 
   const exifData: Record<string, string> = {
     "Format": ext.toUpperCase(),
@@ -214,8 +243,12 @@ export function generateMockAnalysis(
   };
 
   if (isImage) {
-    exifData["AI Analysis"] = "Completed";
-    exifData["AI Score"] = `${aiScore}/100`;
+    exifData["ELA Score"] = `${elaScore}/100`;
+    exifData["HF Score"] = `${hfScore}/100`;
+    exifData["Scoring Method"] = "50% ELA + 50% Hugging Face (demo)";
+    exifData["ELA Analysis"] = "Completed";
+    exifData["HF AI Detection"] = hfScore > 70 ? "Human-Created" : "AI-Generated";
+    exifData["HF Confidence"] = `${Math.max(hfScore, 100 - hfScore).toFixed(1)}%`;
   }
 
   return {
@@ -235,6 +268,6 @@ export function generateMockAnalysis(
       isModified: level !== "authentic",
     },
     createdAt: new Date().toISOString(),
-    completedAt: new Date(Date.now() + Math.floor(Math.random() * 5000) + 3000).toISOString(),
+    completedAt: new Date(Date.now() + 4500).toISOString(),
   };
 }
