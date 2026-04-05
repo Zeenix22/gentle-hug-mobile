@@ -8,7 +8,7 @@ import FilePreviewCard from "@/components/upload/FilePreviewCard";
 import FileTypeBadge from "@/components/ui/file-type-badge";
 import AnimatedProgress from "@/components/ui/animated-progress";
 import { useAuth } from "@/contexts/AuthContext";
-import { uploadFileAndCreateAnalysis, triggerProcessing } from "@/services/analysis-service";
+import { uploadFileAndCreateAnalysis, triggerProcessing, analyzeAsGuest } from "@/services/analysis-service";
 import { toast } from "@/hooks/use-toast";
 
 const supportedTypes = [
@@ -38,41 +38,47 @@ const UploadPage = () => {
 
   const handleAnalyze = async () => {
     setUploadError(null);
-
-    if (!user) {
-      const mockId = crypto.randomUUID().slice(0, 8);
-      navigate(`/processing/${mockId}`, {
-        state: {
-          files: files.map(({ raw, ...f }) => f),
-          mockFileInfo: files.map(f => ({ name: f.name, fileType: f.fileType, size: f.size })),
-        },
-      });
-      return;
-    }
-
     setIsUploading(true);
     setUploadProgress(0);
+
     try {
-      const analysisIds: string[] = [];
+      if (user) {
+        // ── Authenticated flow: upload to storage + DB ──
+        const analysisIds: string[] = [];
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const analysisId = await uploadFileAndCreateAnalysis(file.raw, file.fileType, user.id);
+          analysisIds.push(analysisId);
+          setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+        }
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const analysisId = await uploadFileAndCreateAnalysis(file.raw, file.fileType, user.id);
-        analysisIds.push(analysisId);
-        setUploadProgress(Math.round(((i + 1) / files.length) * 100));
-      }
+        const primaryId = analysisIds[0];
+        navigate(`/processing/${primaryId}`, {
+          state: { analysisIds, files: files.map(({ raw, ...f }) => f) },
+        });
 
-      const primaryId = analysisIds[0];
-      navigate(`/processing/${primaryId}`, {
-        state: { analysisIds, files: files.map(({ raw, ...f }) => f) },
-      });
+        for (const id of analysisIds) {
+          triggerProcessing(id).catch(console.error);
+        }
+      } else {
+        // ── Guest flow: send file directly to edge function ──
+        const results: any[] = [];
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          setUploadProgress(Math.round(((i + 0.5) / files.length) * 100));
+          const result = await analyzeAsGuest(file.raw, file.fileType);
+          results.push(result);
+          setUploadProgress(Math.round(((i + 1) / files.length) * 100));
+        }
 
-      for (const id of analysisIds) {
-        triggerProcessing(id).catch(console.error);
+        // Store results in sessionStorage and navigate to analysis page
+        const primaryResult = results[0];
+        sessionStorage.setItem(`mock-analysis-${primaryResult.id}`, JSON.stringify(primaryResult));
+        navigate(`/analysis/${primaryResult.id}`);
       }
     } catch (err: any) {
-      setUploadError(err.message || "Upload failed. Please try again.");
-      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+      setUploadError(err.message || "Analysis failed. Please try again.");
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
     } finally {
       setIsUploading(false);
     }
@@ -135,7 +141,7 @@ const UploadPage = () => {
             <div className="animate-fade-in">
               <AnimatedProgress value={uploadProgress} showLabel size="sm" variant="default" animated={false} />
               <p className="text-[10px] text-muted-foreground text-center mt-1">
-                Uploading {files.length} file{files.length > 1 ? "s" : ""}...
+                {user ? "Uploading" : "Analyzing"} {files.length} file{files.length > 1 ? "s" : ""}...
               </p>
             </div>
           )}
@@ -147,7 +153,7 @@ const UploadPage = () => {
             className="w-full gap-2 font-semibold"
             disabled={isUploading}
           >
-            {isUploading ? "Uploading..." : `Analyze ${files.length > 1 ? `${files.length} Files` : "File"}`}
+            {isUploading ? (user ? "Uploading..." : "Analyzing...") : `Analyze ${files.length > 1 ? `${files.length} Files` : "File"}`}
             {!isUploading && <ArrowRight className="h-4 w-4" />}
           </Button>
         </div>

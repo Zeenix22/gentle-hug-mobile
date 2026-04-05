@@ -55,6 +55,38 @@ export async function triggerProcessing(analysisId: string): Promise<void> {
   }
 }
 
+/**
+ * Guest analysis: sends the file directly to the edge function for
+ * real-time ELA + HF analysis without requiring authentication.
+ */
+export async function analyzeAsGuest(file: File, fileType: string): Promise<any> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(
+    `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/process-file?guest=true`,
+    {
+      method: "POST",
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      },
+      body: formData,
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new Error(err.error || "Analysis failed");
+  }
+
+  const data = await response.json();
+  if (!data.success || !data.result) {
+    throw new Error("Invalid response from analysis service");
+  }
+
+  return data.result;
+}
+
 export async function getAnalysis(analysisId: string) {
   const { data, error } = await supabase
     .from("analyses" as any)

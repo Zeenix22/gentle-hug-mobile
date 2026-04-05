@@ -181,7 +181,7 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
 // ─── Hugging Face AI Detection ──────────────────────────────────────────────
 
 interface HFDetectionResult {
-  hfScore: number; // 0-100 authenticity score (100 = real, 0 = AI-generated)
+  hfScore: number;
   isAIGenerated: boolean;
   confidence: number;
   rawLabel: string;
@@ -196,9 +196,8 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
   }
 
   try {
-    // Use umm-maybe/AI-image-detector — a fine-tuned ViT model for AI image detection
     const response = await fetch(
-      "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+      "https://api-inference.huggingface.co/models/haywoodsloan/ai-image-detector-deploy",
       {
         method: "POST",
         headers: {
@@ -213,12 +212,11 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
       const errText = await response.text();
       console.error("Hugging Face API error:", response.status, errText);
 
-      // If model is loading, retry once after waiting
       if (response.status === 503) {
         console.log("Model loading, retrying in 20s...");
         await new Promise(r => setTimeout(r, 20000));
         const retryResponse = await fetch(
-          "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+          "https://api-inference.huggingface.co/models/haywoodsloan/ai-image-detector-deploy",
           {
             method: "POST",
             headers: {
@@ -247,12 +245,10 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
 }
 
 function parseHFResponse(data: any[]): HFDetectionResult {
-  // HF returns array of [{label: "human", score: 0.95}, {label: "artificial", score: 0.05}]
   const findings: HFDetectionResult["findings"] = [];
   
   let humanScore = 0;
   let artificialScore = 0;
-  let topLabel = "unknown";
 
   for (const item of data) {
     const label = (item.label || "").toLowerCase();
@@ -263,25 +259,21 @@ function parseHFResponse(data: any[]): HFDetectionResult {
     }
   }
 
-  // If we only got one side, infer the other
   if (humanScore === 0 && artificialScore > 0) humanScore = 1 - artificialScore;
   if (artificialScore === 0 && humanScore > 0) artificialScore = 1 - humanScore;
 
   const isAIGenerated = artificialScore > humanScore;
   const confidence = Math.max(humanScore, artificialScore);
-  
-  // Convert to 0-100 authenticity score (100 = definitely real)
   const hfScore = Math.round(humanScore * 100);
-  topLabel = isAIGenerated ? "AI-Generated" : "Human-Created";
+  const topLabel = isAIGenerated ? "AI-Generated" : "Human-Created";
 
-  // Generate findings
   if (isAIGenerated) {
     const severity = confidence > 0.85 ? "high" : confidence > 0.6 ? "medium" : "low";
     findings.push({
       category: "AI Detection (Hugging Face)",
       finding: `Image classified as AI-generated (${(artificialScore * 100).toFixed(1)}% confidence)`,
       severity,
-      description: `The AI image detector model identifies this image as artificially generated with ${(artificialScore * 100).toFixed(1)}% confidence. This model is trained on diverse AI-generated and real image datasets.`,
+      description: `The AI image detector model identifies this image as artificially generated with ${(artificialScore * 100).toFixed(1)}% confidence.`,
     });
   } else {
     const severity = confidence > 0.85 ? "low" : confidence > 0.6 ? "low" : "medium";
@@ -298,14 +290,14 @@ function parseHFResponse(data: any[]): HFDetectionResult {
       category: "AI Detection (Hugging Face)",
       finding: "Low confidence detection",
       severity: "medium",
-      description: `Model confidence is only ${(confidence * 100).toFixed(1)}% — the result is uncertain and should be interpreted with caution.`,
+      description: `Model confidence is only ${(confidence * 100).toFixed(1)}% — the result is uncertain.`,
     });
   }
 
   return { hfScore, isAIGenerated, confidence, rawLabel: topLabel, findings };
 }
 
-// ─── Metadata Extraction (lightweight, no scoring) ──────────────────────────
+// ─── Metadata Extraction ────────────────────────────────────────────────────
 
 interface MetadataResult {
   exifData: Record<string, string>;
@@ -327,7 +319,7 @@ function extractMetadata(
   const magicValid = matchesMagicBytes(uint8, format);
 
   if (!magicValid) {
-    findings.push({ category: "File Structure", finding: "Magic bytes mismatch", severity: "high", description: `Binary signature doesn't match .${ext} format. File may be renamed or tampered.` });
+    findings.push({ category: "File Structure", finding: "Magic bytes mismatch", severity: "high", description: `Binary signature doesn't match .${ext} format.` });
   }
 
   if (fileType === "image") {
@@ -336,14 +328,13 @@ function extractMetadata(
       if (exifData["EXIF Data"] === "Present") {
         findings.push({ category: "Metadata", finding: "EXIF data present", severity: "low", description: "Original camera metadata found." });
         if (exifData["Camera Make"] || exifData["Camera Model"]) {
-          const camera = [exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ");
-          exifData["Camera"] = camera;
+          exifData["Camera"] = [exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ");
         }
         if (exifData["Software"]) {
           findings.push({ category: "Metadata", finding: `Software: ${exifData["Software"]}`, severity: "low", description: `Image was processed by "${exifData["Software"]}".` });
         }
       } else {
-        findings.push({ category: "Metadata", finding: "EXIF data stripped", severity: "medium", description: "No camera metadata found. Common in re-saved or social media images." });
+        findings.push({ category: "Metadata", finding: "EXIF data stripped", severity: "medium", description: "No camera metadata found." });
       }
     } else if (uint8[0] === 0x89 && uint8[1] === 0x50) {
       exifData = extractPngMetadata(uint8);
@@ -366,6 +357,149 @@ function extractMetadata(
   return { exifData, metadataFindings: findings };
 }
 
+// ─── Direct Analysis (no DB, for guest users) ──────────────────────────────
+
+async function handleDirectAnalysis(req: Request): Promise<Response> {
+  try {
+    const contentType = req.headers.get("content-type") || "";
+    
+    let fileBytes: Uint8Array;
+    let fileName = "uploaded-file";
+    let fileType = "image";
+    let mimeType = "image/jpeg";
+
+    if (contentType.includes("multipart/form-data")) {
+      const formData = await req.formData();
+      const file = formData.get("file") as File | null;
+      if (!file) {
+        return new Response(JSON.stringify({ error: "No file provided" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      fileBytes = new Uint8Array(await file.arrayBuffer());
+      fileName = file.name;
+      mimeType = file.type || "image/jpeg";
+      
+      if (mimeType.startsWith("image/")) fileType = "image";
+      else if (mimeType.startsWith("video/")) fileType = "video";
+      else fileType = "document";
+    } else {
+      // JSON body with base64
+      const body = await req.json();
+      if (!body.imageBase64) {
+        return new Response(JSON.stringify({ error: "No imageBase64 provided" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const binaryStr = atob(body.imageBase64);
+      fileBytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) fileBytes[i] = binaryStr.charCodeAt(i);
+      fileName = body.fileName || "uploaded-file";
+      fileType = body.fileType || "image";
+      mimeType = body.mimeType || "image/jpeg";
+    }
+
+    console.log(`Direct analysis: ${fileName} (${fileBytes.length} bytes, type=${fileType})`);
+
+    // Compute SHA-256
+    const hashBuffer = await crypto.subtle.digest("SHA-256", fileBytes);
+    const sha256 = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+    // Extract metadata
+    const { exifData, metadataFindings } = extractMetadata(fileBytes, fileType, fileName, fileBytes.length, mimeType);
+    exifData["SHA-256"] = sha256.substring(0, 16) + "...";
+
+    const allFindings = [...metadataFindings];
+
+    let elaScore: number | null = null;
+    let hfScore: number | null = null;
+    let finalScore = 50;
+
+    if (fileType === "image") {
+      const [pythonResult, hfResult] = await Promise.all([
+        callPythonELA(fileBytes, fileName),
+        analyzeWithHuggingFace(fileBytes, mimeType),
+      ]);
+
+      if (pythonResult) {
+        elaScore = pythonResult.overall_score;
+        for (const f of pythonResult.findings) {
+          allFindings.push({ category: `ELA: ${f.category}`, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
+        }
+        exifData["ELA Score"] = `${pythonResult.ela_score}/100`;
+        exifData["Noise Consistency"] = `${pythonResult.noise_score}/100`;
+        exifData["Clone Detection"] = `${pythonResult.clone_score}/100`;
+        exifData["ELA Analysis"] = "Completed";
+      }
+
+      if (hfResult) {
+        hfScore = hfResult.hfScore;
+        for (const f of hfResult.findings) allFindings.push(f);
+        exifData["HF AI Detection"] = hfResult.rawLabel;
+        exifData["HF Score"] = `${hfResult.hfScore}/100`;
+        exifData["HF Confidence"] = `${(hfResult.confidence * 100).toFixed(1)}%`;
+      }
+
+      if (elaScore !== null && hfScore !== null) {
+        finalScore = Math.round(elaScore * 0.5 + hfScore * 0.5);
+        exifData["Scoring Method"] = "50% ELA + 50% Hugging Face";
+      } else if (hfScore !== null) {
+        finalScore = hfScore;
+        exifData["Scoring Method"] = "100% Hugging Face (ELA unavailable)";
+      } else if (elaScore !== null) {
+        finalScore = elaScore;
+        exifData["Scoring Method"] = "100% ELA (HF unavailable)";
+      } else {
+        finalScore = 50;
+        exifData["Scoring Method"] = "Default (no analysis engines available)";
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither ELA nor Hugging Face were available." });
+      }
+    } else {
+      finalScore = 50;
+      allFindings.push({ category: "File Type", finding: `${fileType} analysis`, severity: "low", description: `Deep analysis is only available for images.` });
+    }
+
+    finalScore = Math.max(0, Math.min(100, finalScore));
+
+    let authenticityLevel: string;
+    let summary: string;
+    if (finalScore >= 75) {
+      authenticityLevel = "authentic";
+      summary = "Analysis indicates this image is authentic with high confidence.";
+    } else if (finalScore >= 35) {
+      authenticityLevel = "suspicious";
+      summary = "Analysis shows indicators of possible modification or AI generation.";
+    } else {
+      authenticityLevel = "manipulated";
+      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
+    }
+
+    const result = {
+      id: crypto.randomUUID(),
+      fileName,
+      fileType,
+      status: "completed",
+      authenticityLevel,
+      confidenceScore: finalScore,
+      summary,
+      details: allFindings,
+      exifData,
+      hashInfo: { sha256, md5: "n/a", isModified: authenticityLevel !== "authentic" },
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    };
+
+    return new Response(JSON.stringify({ success: true, result }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("Direct analysis error:", err);
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+}
+
 // ─── Edge Function Handler ──────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -374,6 +508,15 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Check if this is a direct/guest analysis (query param or header)
+    const url = new URL(req.url);
+    const isGuest = url.searchParams.get("guest") === "true";
+
+    if (isGuest) {
+      return handleDirectAnalysis(req);
+    }
+
+    // ── Authenticated flow (existing) ──
     const authHeader = req.headers.get("authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Missing authorization" }), {
@@ -383,7 +526,6 @@ Deno.serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
     if (!anonKey) {
       return new Response(JSON.stringify({ error: "Server configuration error" }), {
@@ -433,7 +575,7 @@ Deno.serve(async (req) => {
     const { data: fileData, error: downloadError } = await adminClient.storage.from("uploads").download(analysis.storage_path);
 
     if (downloadError || !fileData) {
-      await adminClient.from("analyses").update({ status: "failed", summary: "Failed to download file for analysis." }).eq("id", analysisId);
+      await adminClient.from("analyses").update({ status: "failed", summary: "Failed to download file." }).eq("id", analysisId);
       return new Response(JSON.stringify({ error: "File download failed" }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -442,20 +584,17 @@ Deno.serve(async (req) => {
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
 
-    // Compute SHA-256
     const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
     const sha256 = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-    // Extract metadata (no scoring — just informational)
     const { exifData, metadataFindings } = extractMetadata(uint8, analysis.file_type, analysis.file_name, analysis.file_size, fileData.type);
     exifData["SHA-256"] = sha256.substring(0, 16) + "...";
 
     const allFindings = [...metadataFindings];
 
-    // ── Run ELA + Hugging Face in parallel for images ──
     let elaScore: number | null = null;
     let hfScore: number | null = null;
-    let finalScore = 50; // default uncertain
+    let finalScore = 50;
 
     if (analysis.file_type === "image") {
       const [pythonResult, hfResult] = await Promise.all([
@@ -463,16 +602,10 @@ Deno.serve(async (req) => {
         analyzeWithHuggingFace(uint8, fileData.type),
       ]);
 
-      // Process ELA results
       if (pythonResult) {
         elaScore = pythonResult.overall_score;
         for (const f of pythonResult.findings) {
-          allFindings.push({
-            category: `ELA: ${f.category}`,
-            finding: f.finding,
-            severity: f.severity as "low" | "medium" | "high",
-            description: f.description,
-          });
+          allFindings.push({ category: `ELA: ${f.category}`, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
         }
         exifData["ELA Score"] = `${pythonResult.ela_score}/100`;
         exifData["Noise Consistency"] = `${pythonResult.noise_score}/100`;
@@ -480,71 +613,50 @@ Deno.serve(async (req) => {
         exifData["ELA Analysis"] = "Completed";
       }
 
-      // Process Hugging Face results
       if (hfResult) {
         hfScore = hfResult.hfScore;
-        for (const f of hfResult.findings) {
-          allFindings.push(f);
-        }
+        for (const f of hfResult.findings) allFindings.push(f);
         exifData["HF AI Detection"] = hfResult.rawLabel;
         exifData["HF Score"] = `${hfResult.hfScore}/100`;
         exifData["HF Confidence"] = `${(hfResult.confidence * 100).toFixed(1)}%`;
       }
 
-      // ── Compute final blended score ──
       if (elaScore !== null && hfScore !== null) {
-        // Both available: 50% ELA + 50% HF
         finalScore = Math.round(elaScore * 0.5 + hfScore * 0.5);
         exifData["Scoring Method"] = "50% ELA + 50% Hugging Face";
       } else if (hfScore !== null) {
-        // Only HF available
         finalScore = hfScore;
         exifData["Scoring Method"] = "100% Hugging Face (ELA unavailable)";
       } else if (elaScore !== null) {
-        // Only ELA available
         finalScore = elaScore;
         exifData["Scoring Method"] = "100% ELA (HF unavailable)";
       } else {
-        // Neither available — uncertain
         finalScore = 50;
         exifData["Scoring Method"] = "Default (no analysis engines available)";
-        allFindings.push({
-          category: "Analysis Status",
-          finding: "No analysis engines available",
-          severity: "high",
-          description: "Neither ELA (Python microservice) nor Hugging Face AI detection were available. Configure PYTHON_ANALYSIS_URL and HF_API_KEY secrets to enable full analysis.",
-        });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither ELA nor HF were available." });
       }
     } else {
-      // Non-image files: basic metadata-only result
       finalScore = 50;
-      allFindings.push({
-        category: "File Type",
-        finding: `${analysis.file_type} analysis`,
-        severity: "low",
-        description: `Deep analysis (ELA + AI detection) is only available for images. This ${analysis.file_type} file has been analyzed at the metadata level only.`,
-      });
+      allFindings.push({ category: "File Type", finding: `${analysis.file_type} analysis`, severity: "low", description: `Deep analysis is only available for images.` });
     }
 
     finalScore = Math.max(0, Math.min(100, finalScore));
 
-    // Determine authenticity level
     let authenticityLevel: string;
     let summary: string;
     if (finalScore >= 75) {
       authenticityLevel = "authentic";
-      summary = "Analysis indicates this image is authentic with high confidence. Both ELA and AI detection show no significant signs of manipulation or artificial generation.";
+      summary = "Analysis indicates this image is authentic with high confidence.";
     } else if (finalScore >= 35) {
       authenticityLevel = "suspicious";
-      summary = "Analysis shows indicators of possible modification or AI generation. Manual review is recommended.";
+      summary = "Analysis shows indicators of possible modification or AI generation.";
     } else {
       authenticityLevel = "manipulated";
-      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated. It should not be considered authentic.";
+      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
     }
 
     const hashInfo = { sha256, md5: "n/a", isModified: authenticityLevel !== "authentic" };
 
-    // Persist results
     await adminClient.from("analyses").update({
       status: "completed",
       authenticity_level: authenticityLevel,
@@ -557,11 +669,7 @@ Deno.serve(async (req) => {
     }).eq("id", analysisId);
 
     return new Response(
-      JSON.stringify({
-        success: true, analysisId,
-        authenticityLevel,
-        confidenceScore: finalScore,
-      }),
+      JSON.stringify({ success: true, analysisId, authenticityLevel, confidenceScore: finalScore }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
