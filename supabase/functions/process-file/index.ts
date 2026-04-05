@@ -216,7 +216,7 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
         console.log("Model loading, retrying in 20s...");
         await new Promise(r => setTimeout(r, 20000));
         const retryResponse = await fetch(
-          "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
+          "https://api-inference.huggingface.co/models/hungnh1201/ai-image-detector",
           {
             method: "POST",
             headers: {
