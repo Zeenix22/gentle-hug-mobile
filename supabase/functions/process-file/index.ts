@@ -414,7 +414,7 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
     // Convert image to base64 for Winston API
     const base64 = btoa(String.fromCharCode(...uint8.slice(0, Math.min(uint8.length, 10_000_000))));
 
-    const response = await fetch("https://api.gowinston.ai/v2/ai-image-detection", {
+    const response = await fetch("https://api.gowinston.ai/v2/image-detection", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${winstonApiKey}`,
