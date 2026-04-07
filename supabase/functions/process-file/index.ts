@@ -195,53 +195,69 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
     return null;
   }
 
-  try {
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${hfApiKey}`,
-          "Content-Type": mimeType || "image/jpeg",
-        },
-        body: uint8,
-      }
-    );
+  // Try multiple models in order of preference
+  const models = [
+    "Organika/sdxl-detector",
+    "umm-maybe/AI-image-detector",
+  ];
 
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Hugging Face API error:", response.status, errText);
-
-      if (response.status === 503) {
-        console.log("Model loading, retrying in 20s...");
-        await new Promise(r => setTimeout(r, 20000));
-        const retryResponse = await fetch(
-          "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${hfApiKey}`,
-              "Content-Type": mimeType || "image/jpeg",
-            },
-            body: uint8,
-          }
-        );
-        if (!retryResponse.ok) {
-          console.error("HF retry failed:", retryResponse.status);
-          return null;
+  for (const model of models) {
+    try {
+      console.log(`Trying HF model: ${model}`);
+      const response = await fetch(
+        `https://api-inference.huggingface.co/models/${model}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${hfApiKey}`,
+            "Content-Type": mimeType || "image/jpeg",
+          },
+          body: uint8,
         }
-        const retryData = await retryResponse.json();
-        return parseHFResponse(retryData);
-      }
-      return null;
-    }
+      );
 
-    const data = await response.json();
-    return parseHFResponse(data);
-  } catch (err) {
-    console.error("Hugging Face analysis error:", err);
-    return null;
+      if (!response.ok) {
+        const errText = await response.text();
+        console.warn(`HF model ${model} error: ${response.status}`, errText.substring(0, 200));
+        
+        if (response.status === 503) {
+          // Model loading — wait and retry once
+          console.log(`Model ${model} loading, retrying in 15s...`);
+          await new Promise(r => setTimeout(r, 15000));
+          const retryResp = await fetch(
+            `https://api-inference.huggingface.co/models/${model}`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${hfApiKey}`,
+                "Content-Type": mimeType || "image/jpeg",
+              },
+              body: uint8,
+            }
+          );
+          if (retryResp.ok) {
+            const retryData = await retryResp.json();
+            console.log(`HF model ${model} succeeded on retry`);
+            return parseHFResponse(retryData);
+          }
+          const retryErr = await retryResp.text();
+          console.warn(`HF retry for ${model} failed: ${retryResp.status}`);
+        }
+        // Try next model
+        continue;
+      }
+
+      const data = await response.json();
+      console.log(`HF model ${model} succeeded`);
+      return parseHFResponse(data);
+    } catch (err) {
+      console.error(`HF model ${model} exception:`, err);
+      continue;
+    }
   }
+
+  console.error("All HF models failed");
+  return null;
 }
 
 function parseHFResponse(data: any[]): HFDetectionResult {
