@@ -197,7 +197,7 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
 
   try {
     const response = await fetch(
-      "https://api-inference.huggingface.co/models/haywoodsloan/ai-image-detector-deploy",
+      "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector",
       {
         method: "POST",
         headers: {
