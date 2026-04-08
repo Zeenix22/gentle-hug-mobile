@@ -240,7 +240,7 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
           );
           if (retryResp.ok) {
             const retryData = await retryResp.json();
-            console.log(`HF model ${model} succeeded on retry`);
+            console.log(`HF ${model} succeeded on retry`);
             return parseHFResponse(retryData);
           }
           console.warn(`HF retry for ${model} failed: ${retryResp.status}`);
