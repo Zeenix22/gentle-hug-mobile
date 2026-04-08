@@ -200,17 +200,18 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
     return null;
   }
 
-  const models = [
-    "Organika/sdxl-detector",
-    "umm-maybe/AI-image-detector",
+  // Try both new router URL and legacy URL for each model
+  const modelConfigs = [
+    { model: "Organika/sdxl-detector", url: "https://router.huggingface.co/hf-inference/models/Organika/sdxl-detector" },
+    { model: "Organika/sdxl-detector", url: "https://api-inference.huggingface.co/models/Organika/sdxl-detector" },
+    { model: "umm-maybe/AI-image-detector", url: "https://router.huggingface.co/hf-inference/models/umm-maybe/AI-image-detector" },
+    { model: "umm-maybe/AI-image-detector", url: "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector" },
   ];
 
-  for (const model of models) {
+  for (const { model, url } of modelConfigs) {
     try {
-      console.log(`Trying HF model: ${model}`);
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
+      console.log(`Trying HF: ${url}`);
+      const response = await fetch(url, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${hfApiKey}`,
@@ -222,13 +223,12 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
 
       if (!response.ok) {
         const errText = await response.text();
-        console.warn(`HF model ${model} error: ${response.status}`, errText.substring(0, 300));
+        console.warn(`HF ${url} error: ${response.status}`, errText.substring(0, 300));
 
         if (response.status === 503) {
           console.log(`Model ${model} loading, retrying in 20s...`);
           await new Promise(r => setTimeout(r, 20000));
-          const retryResp = await fetch(
-            `https://api-inference.huggingface.co/models/${model}`,
+          const retryResp = await fetch(url,
             {
               method: "POST",
               headers: {
