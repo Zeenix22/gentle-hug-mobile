@@ -174,13 +174,24 @@ const Analysis = () => {
       {(() => {
         const elaScoreStr = result.exifData?.["ELA Score"];
         const hfScoreStr = result.exifData?.["HF Score"];
+        const winstonScoreStr = result.exifData?.["Winston Score"];
         const hasELA = !!elaScoreStr;
         const hasHF = !!hfScoreStr;
+        const hasWinston = !!winstonScoreStr;
         const elaScore = hasELA ? parseInt(elaScoreStr!.replace("/100", "")) : null;
         const hfScore = hasHF ? parseInt(hfScoreStr!.replace("/100", "")) : null;
+        const winstonScore = hasWinston ? parseInt(winstonScoreStr!.replace("/100", "")) : null;
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
+
+        const engines = [
+          { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, has: hasELA, desc: "Pixel-level error analysis, noise consistency, and clone detection", offDesc: "ELA requires the Python microservice." },
+          { label: "AI Detection (Hugging Face)", icon: Eye, score: hfScore, has: hasHF, desc: "ViT-based AI image detector — classifies images as human-created or AI-generated", offDesc: "Requires HF_API_KEY." },
+          { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, has: hasWinston, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
+        ];
+
+        const hasAny = hasELA || hasHF || hasWinston;
 
         return (
           <Card className="border-border animate-fade-in" style={{ animationDelay: "0.12s", opacity: 0 }}>
@@ -190,62 +201,38 @@ const Analysis = () => {
                 Score Breakdown
               </h2>
 
-              {/* ELA Score */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Cpu className="h-3 w-3" /> Error Level Analysis (ELA)
-                  </span>
-                  {hasELA && elaScore != null ? (
-                    <span className="text-xs font-bold text-foreground">{elaScore}/100</span>
-                  ) : (
-                    <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
-                  )}
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  {hasELA && elaScore != null ? (
-                    <div
-                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(elaScore))}
-                      style={{ width: `${elaScore}%` }}
-                    />
-                  ) : (
-                    <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
-                  )}
-                </div>
-                <p className="text-[10px] text-muted-foreground">
-                  {hasELA ? "Pixel-level error analysis, noise consistency, and clone detection" : "ELA requires the Python microservice. Configure PYTHON_ANALYSIS_URL to enable."}
-                </p>
-              </div>
+              {engines.map((eng) => {
+                const Icon = eng.icon;
+                return (
+                  <div key={eng.label} className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <Icon className="h-3 w-3" /> {eng.label}
+                      </span>
+                      {eng.has && eng.score != null ? (
+                        <span className="text-xs font-bold text-foreground">{eng.score}/100</span>
+                      ) : (
+                        <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
+                      )}
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      {eng.has && eng.score != null ? (
+                        <div
+                          className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(eng.score))}
+                          style={{ width: `${eng.score}%` }}
+                        />
+                      ) : (
+                        <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {eng.has ? eng.desc : eng.offDesc}
+                    </p>
+                  </div>
+                );
+              })}
 
-              {/* Hugging Face AI Detection Score */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Eye className="h-3 w-3" /> AI Detection (Hugging Face)
-                  </span>
-                  {hasHF && hfScore != null ? (
-                    <span className="text-xs font-bold text-foreground">{hfScore}/100</span>
-                  ) : (
-                    <span className="text-[10px] font-medium text-muted-foreground/60 italic">Not available</span>
-                  )}
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  {hasHF && hfScore != null ? (
-                    <div
-                      className={cn("h-full rounded-full transition-all duration-1000", scoreBarColor(hfScore))}
-                      style={{ width: `${hfScore}%` }}
-                    />
-                  ) : (
-                    <div className="h-full rounded-full bg-muted-foreground/10" style={{ width: "100%" }} />
-                  )}
-                </div>
-                <p className="text-[10px] text-muted-foreground">
-                  {hasHF ? "ViT-based AI image detector — classifies images as human-created or AI-generated" : "AI detection requires HF_API_KEY. Available for image files only."}
-                </p>
-              </div>
-
-              {/* Blended Score */}
-              {(hasELA || hasHF) && (
+              {hasAny && (
                 <div className="pt-2 border-t border-border">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-muted-foreground flex items-center gap-1.5">
@@ -254,7 +241,7 @@ const Analysis = () => {
                     <span className="text-xs font-bold text-primary">{result.confidenceScore}/100</span>
                   </div>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    {result.exifData?.["Scoring Method"] || (hasELA && hasHF ? "50% ELA + 50% Hugging Face" : hasHF ? "100% Hugging Face" : "100% ELA")}
+                    {result.exifData?.["Scoring Method"] || "Weighted blend of available engines"}
                   </p>
                 </div>
               )}

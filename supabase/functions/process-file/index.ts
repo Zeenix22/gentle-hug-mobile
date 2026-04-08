@@ -157,7 +157,12 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
   }
 
   try {
-    const base64 = btoa(String.fromCharCode(...uint8.slice(0, Math.min(uint8.length, 10_000_000))));
+    const CHUNK = 8192;
+    let base64 = "";
+    const len = Math.min(uint8.length, 10_000_000);
+    for (let i = 0; i < len; i += CHUNK) {
+      base64 += btoa(String.fromCharCode(...uint8.slice(i, Math.min(i + CHUNK, len))));
+    }
 
     const response = await fetch(`${pythonUrl}/analyze`, {
       method: "POST",
@@ -195,63 +200,59 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
     return null;
   }
 
-  // Try multiple models in order of preference
-  const models = [
-    "Organika/sdxl-detector",
-    "umm-maybe/AI-image-detector",
+  // Try both new router URL and legacy URL for each model
+  const modelConfigs = [
+    { model: "Organika/sdxl-detector", url: "https://router.huggingface.co/hf-inference/models/Organika/sdxl-detector" },
+    { model: "Organika/sdxl-detector", url: "https://api-inference.huggingface.co/models/Organika/sdxl-detector" },
+    { model: "umm-maybe/AI-image-detector", url: "https://router.huggingface.co/hf-inference/models/umm-maybe/AI-image-detector" },
+    { model: "umm-maybe/AI-image-detector", url: "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector" },
   ];
 
-  for (const model of models) {
+  for (const { model, url } of modelConfigs) {
     try {
-      console.log(`Trying HF model: ${model}`);
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
+      console.log(`Trying HF: ${url}`);
+      const response = await fetch(url, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${hfApiKey}`,
             "Content-Type": mimeType || "image/jpeg",
           },
-          body: uint8,
+          body: uint8.buffer,
         }
       );
 
       if (!response.ok) {
         const errText = await response.text();
-        console.warn(`HF model ${model} error: ${response.status}`, errText.substring(0, 200));
-        
+        console.warn(`HF ${url} error: ${response.status}`, errText.substring(0, 300));
+
         if (response.status === 503) {
-          // Model loading — wait and retry once
-          console.log(`Model ${model} loading, retrying in 15s...`);
-          await new Promise(r => setTimeout(r, 15000));
-          const retryResp = await fetch(
-            `https://api-inference.huggingface.co/models/${model}`,
+          console.log(`Model ${model} loading, retrying in 20s...`);
+          await new Promise(r => setTimeout(r, 20000));
+          const retryResp = await fetch(url,
             {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${hfApiKey}`,
                 "Content-Type": mimeType || "image/jpeg",
               },
-              body: uint8,
+              body: uint8.buffer,
             }
           );
           if (retryResp.ok) {
             const retryData = await retryResp.json();
-            console.log(`HF model ${model} succeeded on retry`);
+            console.log(`HF ${model} succeeded on retry`);
             return parseHFResponse(retryData);
           }
-          const retryErr = await retryResp.text();
           console.warn(`HF retry for ${model} failed: ${retryResp.status}`);
         }
-        // Try next model
         continue;
       }
 
       const data = await response.json();
-      console.log(`HF model ${model} succeeded`);
+      console.log(`HF ${model} raw response:`, JSON.stringify(data).substring(0, 500));
       return parseHFResponse(data);
     } catch (err) {
-      console.error(`HF model ${model} exception:`, err);
+      console.error(`HF ${url} exception:`, err);
       continue;
     }
   }
@@ -260,13 +261,16 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
   return null;
 }
 
-function parseHFResponse(data: any[]): HFDetectionResult {
+function parseHFResponse(data: any): HFDetectionResult {
   const findings: HFDetectionResult["findings"] = [];
+
+  // data can be an array of arrays (nested) or flat array
+  const items: any[] = Array.isArray(data) ? (Array.isArray(data[0]) ? data[0] : data) : [];
 
   let humanScore = 0;
   let artificialScore = 0;
 
-  for (const item of data) {
+  for (const item of items) {
     const label = (item.label || "").toLowerCase();
     if (label === "human" || label === "real") {
       humanScore = item.score;
@@ -277,6 +281,19 @@ function parseHFResponse(data: any[]): HFDetectionResult {
 
   if (humanScore === 0 && artificialScore > 0) humanScore = 1 - artificialScore;
   if (artificialScore === 0 && humanScore > 0) artificialScore = 1 - humanScore;
+
+  // If we couldn't find matching labels, try first two entries
+  if (humanScore === 0 && artificialScore === 0 && items.length >= 2) {
+    const sorted = [...items].sort((a, b) => b.score - a.score);
+    const topLabel = (sorted[0].label || "").toLowerCase();
+    if (topLabel.includes("artificial") || topLabel.includes("ai") || topLabel.includes("fake")) {
+      artificialScore = sorted[0].score;
+      humanScore = sorted[1].score;
+    } else {
+      humanScore = sorted[0].score;
+      artificialScore = sorted[1].score;
+    }
+  }
 
   const isAIGenerated = artificialScore > humanScore;
   const confidence = Math.max(humanScore, artificialScore);
@@ -289,7 +306,7 @@ function parseHFResponse(data: any[]): HFDetectionResult {
       category: "AI Detection (Hugging Face)",
       finding: `Image classified as AI-generated (${(artificialScore * 100).toFixed(1)}% confidence)`,
       severity,
-      description: `The HF AI image detector identifies this image as artificially generated with ${(artificialScore * 100).toFixed(1)}% confidence.`,
+      description: `The HF ViT-based detector identifies this image as AI-generated with ${(artificialScore * 100).toFixed(1)}% confidence.`,
     });
   } else {
     const severity = confidence > 0.85 ? "low" : confidence > 0.6 ? "low" : "medium";
@@ -297,123 +314,17 @@ function parseHFResponse(data: any[]): HFDetectionResult {
       category: "AI Detection (Hugging Face)",
       finding: `Image classified as human-created (${(humanScore * 100).toFixed(1)}% confidence)`,
       severity,
-      description: `The HF AI image detector identifies this image as human-created with ${(humanScore * 100).toFixed(1)}% confidence.`,
+      description: `The HF ViT-based detector identifies this image as human-created with ${(humanScore * 100).toFixed(1)}% confidence.`,
     });
   }
 
   return { hfScore, isAIGenerated, confidence, rawLabel: topLabel, findings };
 }
 
-// ─── Hive Moderation AI Detection ───────────────────────────────────────────
-
-interface HiveDetectionResult {
-  hiveScore: number;       // 0-100 authenticity (100 = real)
-  isAIGenerated: boolean;
-  confidence: number;
-  findings: { category: string; finding: string; severity: "low" | "medium" | "high"; description: string }[];
-}
-
-async function analyzeWithHive(uint8: Uint8Array, mimeType: string): Promise<HiveDetectionResult | null> {
-  const hiveApiKey = Deno.env.get("HIVE_API_KEY");
-  if (!hiveApiKey) {
-    console.log("HIVE_API_KEY not set — skipping Hive Moderation analysis");
-    return null;
-  }
-
-  try {
-    // Hive AI-Generated Image Detection API
-    const blob = new Blob([uint8], { type: mimeType || "image/jpeg" });
-    const formData = new FormData();
-    formData.append("media", blob, "image.jpg");
-
-    const response = await fetch("https://api.thehive.ai/api/v2/task/sync", {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${hiveApiKey}`,
-        Accept: "application/json",
-      },
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Hive API error:", response.status, errText);
-      return null;
-    }
-
-    const data = await response.json();
-    return parseHiveResponse(data);
-  } catch (err) {
-    console.error("Hive Moderation analysis error:", err);
-    return null;
-  }
-}
-
-function parseHiveResponse(data: any): HiveDetectionResult {
-  const findings: HiveDetectionResult["findings"] = [];
-
-  try {
-    // Navigate Hive response structure
-    const output = data?.status?.[0]?.response?.output;
-    if (!output || !Array.isArray(output)) {
-      console.warn("Unexpected Hive response structure:", JSON.stringify(data).substring(0, 500));
-      return { hiveScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
-    }
-
-    // Look for AI-generated classification in output classes
-    let aiGeneratedScore = 0;
-    let notAiScore = 0;
-
-    for (const item of output) {
-      const classes = item?.classes;
-      if (!classes || !Array.isArray(classes)) continue;
-
-      for (const cls of classes) {
-        const className = (cls.class || "").toLowerCase();
-        if (className === "ai_generated" || className === "ai-generated" || className === "ai_gen") {
-          aiGeneratedScore = Math.max(aiGeneratedScore, cls.score || 0);
-        } else if (className === "not_ai_generated" || className === "not_ai" || className === "human") {
-          notAiScore = Math.max(notAiScore, cls.score || 0);
-        }
-      }
-    }
-
-    // If we couldn't parse specific classes, try a simpler approach
-    if (aiGeneratedScore === 0 && notAiScore === 0) {
-      // Try looking at the raw output for any score
-      const jsonStr = JSON.stringify(data);
-      console.log("Hive raw response (truncated):", jsonStr.substring(0, 1000));
-      return { hiveScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
-    }
-
-    const isAIGenerated = aiGeneratedScore > notAiScore;
-    const confidence = Math.max(aiGeneratedScore, notAiScore);
-    const hiveScore = Math.round((1 - aiGeneratedScore) * 100); // authenticity score
-
-    const severity = isAIGenerated
-      ? (confidence > 0.85 ? "high" : confidence > 0.6 ? "medium" : "low")
-      : (confidence > 0.85 ? "low" : "medium");
-
-    findings.push({
-      category: "AI Detection (Hive Moderation)",
-      finding: isAIGenerated
-        ? `AI-generated (${(aiGeneratedScore * 100).toFixed(1)}% confidence)`
-        : `Likely authentic (${(notAiScore * 100).toFixed(1)}% confidence)`,
-      severity,
-      description: `Hive Moderation's deep learning model classifies this image as ${isAIGenerated ? "AI-generated" : "human-created"} with ${(confidence * 100).toFixed(1)}% confidence.`,
-    });
-
-    return { hiveScore, isAIGenerated, confidence, findings };
-  } catch (err) {
-    console.error("Error parsing Hive response:", err);
-    return { hiveScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
-  }
-}
-
 // ─── Winston AI Detection ───────────────────────────────────────────────────
 
 interface WinstonDetectionResult {
-  winstonScore: number;    // 0-100 authenticity (100 = real)
+  winstonScore: number;
   isAIGenerated: boolean;
   confidence: number;
   findings: { category: string; finding: string; severity: "low" | "medium" | "high"; description: string }[];
@@ -427,8 +338,36 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
   }
 
   try {
-    // Convert image to base64 for Winston API
-    const base64 = btoa(String.fromCharCode(...uint8.slice(0, Math.min(uint8.length, 10_000_000))));
+    // Winston v2 API requires a publicly accessible URL.
+    // Upload to Supabase storage temporarily, create a signed URL, call Winston, then clean up.
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const adminClient = createClient(supabaseUrl, serviceKey);
+
+    const tempPath = `_winston_temp/${crypto.randomUUID()}.jpg`;
+    const blob = new Blob([uint8], { type: mimeType || "image/jpeg" });
+
+    const { error: uploadErr } = await adminClient.storage
+      .from("uploads")
+      .upload(tempPath, blob, { contentType: mimeType || "image/jpeg", upsert: true });
+
+    if (uploadErr) {
+      console.error("Winston temp upload failed:", uploadErr.message);
+      return null;
+    }
+
+    // Create a signed URL valid for 5 minutes
+    const { data: signedData, error: signErr } = await adminClient.storage
+      .from("uploads")
+      .createSignedUrl(tempPath, 300);
+
+    if (signErr || !signedData?.signedUrl) {
+      console.error("Winston signed URL failed:", signErr?.message);
+      await adminClient.storage.from("uploads").remove([tempPath]);
+      return null;
+    }
+
+    console.log("Winston: calling API with signed URL");
 
     const response = await fetch("https://api.gowinston.ai/v2/image-detection", {
       method: "POST",
@@ -437,17 +376,22 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        image: `data:${mimeType || "image/jpeg"};base64,${base64}`,
+        url: signedData.signedUrl,
+        version: "latest",
       }),
     });
 
+    // Clean up temp file
+    await adminClient.storage.from("uploads").remove([tempPath]).catch(() => {});
+
     if (!response.ok) {
       const errText = await response.text();
-      console.error("Winston AI API error:", response.status, errText);
+      console.error("Winston AI API error:", response.status, errText.substring(0, 500));
       return null;
     }
 
     const data = await response.json();
+    console.log("Winston raw response:", JSON.stringify(data).substring(0, 500));
     return parseWinstonResponse(data);
   } catch (err) {
     console.error("Winston AI analysis error:", err);
@@ -459,16 +403,17 @@ function parseWinstonResponse(data: any): WinstonDetectionResult {
   const findings: WinstonDetectionResult["findings"] = [];
 
   try {
-    // Winston API returns a score (0-100) where higher = more likely human
-    const score = data?.score ?? data?.result?.score ?? null;
-    const confidence = data?.confidence ?? data?.result?.confidence ?? 0;
+    // Winston v2 response: { score: 0-100 (0=AI, 100=human), human_probability, ai_probability }
+    const score = data?.score ?? null;
+    const humanProb = data?.human_probability;
+    const aiProb = data?.ai_probability;
 
-    if (score === null) {
+    if (score === null && humanProb === undefined) {
       console.warn("Winston response missing score:", JSON.stringify(data).substring(0, 500));
       return { winstonScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
     }
 
-    const winstonScore = Math.round(score);
+    const winstonScore = Math.round(score ?? (humanProb * 100));
     const isAIGenerated = winstonScore < 50;
 
     const severity = isAIGenerated
@@ -495,8 +440,8 @@ function parseWinstonResponse(data: any): WinstonDetectionResult {
 
 interface EngineScore {
   name: string;
-  score: number;       // 0-100 authenticity
-  weight: number;      // relative weight
+  score: number;
+  weight: number;
 }
 
 function computeBlendedScore(engines: EngineScore[]): { finalScore: number; method: string } {
@@ -594,17 +539,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Run all 4 engines in parallel
-  const [pythonResult, hfResult, hiveResult, winstonResult] = await Promise.all([
+  // Run 3 engines in parallel: ELA, Hugging Face, Winston AI
+  const [pythonResult, hfResult, winstonResult] = await Promise.all([
     callPythonELA(uint8, fileName),
     analyzeWithHuggingFace(uint8, mimeType),
-    analyzeWithHive(uint8, mimeType),
     analyzeWithWinston(uint8, mimeType),
   ]);
 
-  // ELA (weight: 25)
+  // ELA (weight: 30)
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.overall_score, weight: 25 });
+    engines.push({ name: "ELA", score: pythonResult.overall_score, weight: 30 });
     for (const f of pythonResult.findings) {
       findings.push({ category: `ELA: ${f.category}`, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
     }
@@ -614,34 +558,25 @@ async function runAllEngines(
     exifExtras["ELA Analysis"] = "Completed";
   }
 
-  // Hugging Face (weight: 30)
+  // Hugging Face (weight: 40)
   if (hfResult) {
-    engines.push({ name: "Hugging Face", score: hfResult.hfScore, weight: 30 });
+    engines.push({ name: "Hugging Face", score: hfResult.hfScore, weight: 40 });
     for (const f of hfResult.findings) findings.push(f);
     exifExtras["HF AI Detection"] = hfResult.rawLabel;
     exifExtras["HF Score"] = `${hfResult.hfScore}/100`;
     exifExtras["HF Confidence"] = `${(hfResult.confidence * 100).toFixed(1)}%`;
   }
 
-  // Hive Moderation (weight: 25)
-  if (hiveResult) {
-    engines.push({ name: "Hive Moderation", score: hiveResult.hiveScore, weight: 25 });
-    for (const f of hiveResult.findings) findings.push(f);
-    exifExtras["Hive Score"] = `${hiveResult.hiveScore}/100`;
-    exifExtras["Hive AI Detection"] = hiveResult.isAIGenerated ? "AI-Generated" : "Human-Created";
-  }
-
-  // Winston AI (weight: 20)
+  // Winston AI (weight: 30)
   if (winstonResult) {
-    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 20 });
+    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 30 });
     for (const f of winstonResult.findings) findings.push(f);
     exifExtras["Winston Score"] = `${winstonResult.winstonScore}/100`;
     exifExtras["Winston AI Detection"] = winstonResult.isAIGenerated ? "AI-Generated" : "Human-Created";
   }
 
-  // Log which engines ran
   const engineNames = engines.map(e => e.name).join(", ");
-  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/4)`);
+  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/3)`);
 
   return { engines, findings, exifExtras };
 }
@@ -689,11 +624,9 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
 
     console.log(`Direct analysis: ${fileName} (${fileBytes.length} bytes, type=${fileType})`);
 
-    // Compute SHA-256
     const hashBuffer = await crypto.subtle.digest("SHA-256", fileBytes);
     const sha256 = Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
 
-    // Extract metadata
     const { exifData, metadataFindings } = extractMetadata(fileBytes, fileType, fileName, fileBytes.length, mimeType);
     exifData["SHA-256"] = sha256.substring(0, 16) + "...";
 
@@ -711,7 +644,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, Hugging Face, Hive, Winston) were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, Hugging Face, Winston) were available." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${fileType} analysis`, severity: "low", description: "Deep analysis is only available for images." });
