@@ -249,10 +249,10 @@ async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Prom
       }
 
       const data = await response.json();
-      console.log(`HF model ${model} raw response:`, JSON.stringify(data).substring(0, 500));
+      console.log(`HF ${model} raw response:`, JSON.stringify(data).substring(0, 500));
       return parseHFResponse(data);
     } catch (err) {
-      console.error(`HF model ${model} exception:`, err);
+      console.error(`HF ${url} exception:`, err);
       continue;
     }
   }
