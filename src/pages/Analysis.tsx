@@ -173,7 +173,7 @@ const Analysis = () => {
       {/* Score Breakdown: ELA + Hugging Face */}
       {(() => {
         const elaScoreStr = result.exifData?.["ELA Score"];
-        const hfScoreStr = result.exifData?.["HF Score"];
+        const hfScoreStr = result.exifData?.["AI Vision Score"] || result.exifData?.["HF Score"];
         const winstonScoreStr = result.exifData?.["Winston Score"];
         const hasELA = !!elaScoreStr;
         const hasHF = !!hfScoreStr;
