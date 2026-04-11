@@ -173,7 +173,7 @@ const Analysis = () => {
       {/* Score Breakdown: ELA + Hugging Face */}
       {(() => {
         const elaScoreStr = result.exifData?.["ELA Score"];
-        const hfScoreStr = result.exifData?.["HF Score"];
+        const hfScoreStr = result.exifData?.["AI Vision Score"] || result.exifData?.["HF Score"];
         const winstonScoreStr = result.exifData?.["Winston Score"];
         const hasELA = !!elaScoreStr;
         const hasHF = !!hfScoreStr;
@@ -187,7 +187,7 @@ const Analysis = () => {
 
         const engines = [
           { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, has: hasELA, desc: "Pixel-level error analysis, noise consistency, and clone detection", offDesc: "ELA requires the Python microservice." },
-          { label: "AI Detection (Hugging Face)", icon: Eye, score: hfScore, has: hasHF, desc: "ViT-based AI image detector — classifies images as human-created or AI-generated", offDesc: "Requires HF_API_KEY." },
+          { label: "AI Vision Analysis (Gemini)", icon: Eye, score: hfScore, has: hasHF, desc: "Advanced AI vision model analyzing textures, artifacts, and visual patterns for AI-generation detection", offDesc: "Requires LOVABLE_API_KEY." },
           { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, has: hasWinston, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
         ];
 

@@ -183,142 +183,149 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
   }
 }
 
-// ─── Hugging Face AI Detection ──────────────────────────────────────────────
+// ─── AI Vision Analysis (Lovable AI Gateway / Gemini) ───────────────────────
 
-interface HFDetectionResult {
-  hfScore: number;
+interface AIVisionResult {
+  aiScore: number; // 0-100 where 100 = definitely human, 0 = definitely AI
   isAIGenerated: boolean;
   confidence: number;
-  rawLabel: string;
+  analysis: string;
   findings: { category: string; finding: string; severity: "low" | "medium" | "high"; description: string }[];
 }
 
-async function analyzeWithHuggingFace(uint8: Uint8Array, mimeType: string): Promise<HFDetectionResult | null> {
-  const hfApiKey = Deno.env.get("HF_API_KEY");
-  if (!hfApiKey) {
-    console.warn("HF_API_KEY not set — skipping Hugging Face analysis");
+async function analyzeWithAIVision(uint8: Uint8Array, mimeType: string): Promise<AIVisionResult | null> {
+  const apiKey = Deno.env.get("LOVABLE_API_KEY");
+  if (!apiKey) {
+    console.log("LOVABLE_API_KEY not set — skipping AI Vision analysis");
     return null;
   }
 
-  // Try both new router URL and legacy URL for each model
-  const modelConfigs = [
-    { model: "Organika/sdxl-detector", url: "https://router.huggingface.co/hf-inference/models/Organika/sdxl-detector" },
-    { model: "Organika/sdxl-detector", url: "https://api-inference.huggingface.co/models/Organika/sdxl-detector" },
-    { model: "umm-maybe/AI-image-detector", url: "https://router.huggingface.co/hf-inference/models/umm-maybe/AI-image-detector" },
-    { model: "umm-maybe/AI-image-detector", url: "https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector" },
-  ];
-
-  for (const { model, url } of modelConfigs) {
-    try {
-      console.log(`Trying HF: ${url}`);
-      const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${hfApiKey}`,
-            "Content-Type": mimeType || "image/jpeg",
-          },
-          body: uint8.buffer,
-        }
-      );
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn(`HF ${url} error: ${response.status}`, errText.substring(0, 300));
-
-        if (response.status === 503) {
-          console.log(`Model ${model} loading, retrying in 20s...`);
-          await new Promise(r => setTimeout(r, 20000));
-          const retryResp = await fetch(url,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${hfApiKey}`,
-                "Content-Type": mimeType || "image/jpeg",
-              },
-              body: uint8.buffer,
-            }
-          );
-          if (retryResp.ok) {
-            const retryData = await retryResp.json();
-            console.log(`HF ${model} succeeded on retry`);
-            return parseHFResponse(retryData);
-          }
-          console.warn(`HF retry for ${model} failed: ${retryResp.status}`);
-        }
-        continue;
+  try {
+    // Convert to base64 properly (handle large images without chunking issues)
+    const len = Math.min(uint8.length, 4_000_000); // 4MB limit for vision
+    const slice = uint8.length > len ? uint8.slice(0, len) : uint8;
+    
+    // Use btoa on full binary string to avoid padding issues from chunking
+    let binaryStr = "";
+    const CHUNK = 8192;
+    for (let i = 0; i < slice.length; i += CHUNK) {
+      const end = Math.min(i + CHUNK, slice.length);
+      for (let j = i; j < end; j++) {
+        binaryStr += String.fromCharCode(slice[j]);
       }
-
-      const data = await response.json();
-      console.log(`HF ${model} raw response:`, JSON.stringify(data).substring(0, 500));
-      return parseHFResponse(data);
-    } catch (err) {
-      console.error(`HF ${url} exception:`, err);
-      continue;
     }
-  }
+    const base64 = btoa(binaryStr);
 
-  console.error("All HF models failed");
-  return null;
-}
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert AI image forensics analyst. Analyze the provided image and determine if it is:
+1. AI-generated (by tools like Midjourney, DALL-E, Stable Diffusion, Flux, etc.)
+2. Digitally manipulated/edited (Photoshop, face-swap, etc.)
+3. An authentic/real photograph
 
-function parseHFResponse(data: any): HFDetectionResult {
-  const findings: HFDetectionResult["findings"] = [];
+Look for these specific indicators:
+- Unnatural textures, too-smooth skin, plastic-like surfaces
+- Inconsistent lighting and shadows
+- Distorted or melted backgrounds, objects, text
+- Anatomical errors (extra fingers, asymmetric features, weird ears/teeth)
+- Repetitive patterns or artifacts typical of diffusion models
+- Too-perfect symmetry or unnaturally uniform details
+- Lack of natural camera noise/grain
+- Inconsistent depth of field
+- Signs of deepfake (face boundary artifacts, inconsistent skin tone)
 
-  // data can be an array of arrays (nested) or flat array
-  const items: any[] = Array.isArray(data) ? (Array.isArray(data[0]) ? data[0] : data) : [];
-
-  let humanScore = 0;
-  let artificialScore = 0;
-
-  for (const item of items) {
-    const label = (item.label || "").toLowerCase();
-    if (label === "human" || label === "real") {
-      humanScore = item.score;
-    } else if (label === "artificial" || label === "ai" || label === "fake") {
-      artificialScore = item.score;
-    }
-  }
-
-  if (humanScore === 0 && artificialScore > 0) humanScore = 1 - artificialScore;
-  if (artificialScore === 0 && humanScore > 0) artificialScore = 1 - humanScore;
-
-  // If we couldn't find matching labels, try first two entries
-  if (humanScore === 0 && artificialScore === 0 && items.length >= 2) {
-    const sorted = [...items].sort((a, b) => b.score - a.score);
-    const topLabel = (sorted[0].label || "").toLowerCase();
-    if (topLabel.includes("artificial") || topLabel.includes("ai") || topLabel.includes("fake")) {
-      artificialScore = sorted[0].score;
-      humanScore = sorted[1].score;
-    } else {
-      humanScore = sorted[0].score;
-      artificialScore = sorted[1].score;
-    }
-  }
-
-  const isAIGenerated = artificialScore > humanScore;
-  const confidence = Math.max(humanScore, artificialScore);
-  const hfScore = Math.round(humanScore * 100);
-  const topLabel = isAIGenerated ? "AI-Generated" : "Human-Created";
-
-  if (isAIGenerated) {
-    const severity = confidence > 0.85 ? "high" : confidence > 0.6 ? "medium" : "low";
-    findings.push({
-      category: "AI Detection (Hugging Face)",
-      finding: `Image classified as AI-generated (${(artificialScore * 100).toFixed(1)}% confidence)`,
-      severity,
-      description: `The HF ViT-based detector identifies this image as AI-generated with ${(artificialScore * 100).toFixed(1)}% confidence.`,
+You MUST respond with ONLY valid JSON in this exact format:
+{
+  "human_score": <number 0-100, where 100 means definitely real/human-created, 0 means definitely AI>,
+  "is_ai": <boolean>,
+  "confidence": <number 0.0-1.0>,
+  "verdict": "<one of: authentic, ai_generated, manipulated, uncertain>",
+  "reasoning": "<2-3 sentence explanation>",
+  "indicators": ["<list of specific indicators found>"]
+}`
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Analyze this image for AI generation or manipulation. Be thorough and precise." },
+              {
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType || "image/jpeg"};base64,${base64}`,
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 1000,
+      }),
     });
-  } else {
-    const severity = confidence > 0.85 ? "low" : confidence > 0.6 ? "low" : "medium";
-    findings.push({
-      category: "AI Detection (Hugging Face)",
-      finding: `Image classified as human-created (${(humanScore * 100).toFixed(1)}% confidence)`,
-      severity,
-      description: `The HF ViT-based detector identifies this image as human-created with ${(humanScore * 100).toFixed(1)}% confidence.`,
-    });
-  }
 
-  return { hfScore, isAIGenerated, confidence, rawLabel: topLabel, findings };
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("AI Vision API error:", response.status, errText.substring(0, 500));
+      return null;
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || "";
+    console.log("AI Vision raw response:", content.substring(0, 500));
+
+    // Parse JSON from the response (handle markdown code blocks)
+    let parsed: any;
+    try {
+      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
+      const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : content;
+      parsed = JSON.parse(jsonStr.trim());
+    } catch {
+      console.error("Failed to parse AI Vision JSON:", content.substring(0, 300));
+      return null;
+    }
+
+    const humanScore = Math.max(0, Math.min(100, Math.round(parsed.human_score ?? 50)));
+    const isAI = parsed.is_ai === true;
+    const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
+    const findings: AIVisionResult["findings"] = [];
+
+    const severity: "low" | "medium" | "high" = isAI
+      ? (confidence > 0.85 ? "high" : confidence > 0.6 ? "medium" : "low")
+      : (confidence > 0.85 ? "low" : "medium");
+
+    findings.push({
+      category: "AI Vision Analysis",
+      finding: isAI
+        ? `Image likely AI-generated (${(100 - humanScore)}% AI probability)`
+        : `Image likely authentic (${humanScore}% human probability)`,
+      severity,
+      description: parsed.reasoning || "AI vision model analysis completed.",
+    });
+
+    if (parsed.indicators && Array.isArray(parsed.indicators)) {
+      for (const indicator of parsed.indicators.slice(0, 5)) {
+        findings.push({
+          category: "AI Vision: Indicator",
+          finding: String(indicator),
+          severity: isAI ? "medium" : "low",
+          description: `Detected during visual forensic analysis.`,
+        });
+      }
+    }
+
+    return { aiScore: humanScore, isAIGenerated: isAI, confidence, analysis: parsed.reasoning || "", findings };
+  } catch (err) {
+    console.error("AI Vision analysis error:", err);
+    return null;
+  }
 }
 
 // ─── Winston AI Detection ───────────────────────────────────────────────────
@@ -338,8 +345,6 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
   }
 
   try {
-    // Winston v2 API requires a publicly accessible URL.
-    // Upload to Supabase storage temporarily, create a signed URL, call Winston, then clean up.
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const adminClient = createClient(supabaseUrl, serviceKey);
@@ -356,7 +361,6 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
       return null;
     }
 
-    // Create a signed URL valid for 5 minutes
     const { data: signedData, error: signErr } = await adminClient.storage
       .from("uploads")
       .createSignedUrl(tempPath, 300);
@@ -375,13 +379,9 @@ async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<
         Authorization: `Bearer ${winstonApiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        url: signedData.signedUrl,
-        version: "latest",
-      }),
+      body: JSON.stringify({ url: signedData.signedUrl }),
     });
 
-    // Clean up temp file
     await adminClient.storage.from("uploads").remove([tempPath]).catch(() => {});
 
     if (!response.ok) {
@@ -403,10 +403,8 @@ function parseWinstonResponse(data: any): WinstonDetectionResult {
   const findings: WinstonDetectionResult["findings"] = [];
 
   try {
-    // Winston v2 response: { score: 0-100 (0=AI, 100=human), human_probability, ai_probability }
     const score = data?.score ?? null;
     const humanProb = data?.human_probability;
-    const aiProb = data?.ai_probability;
 
     if (score === null && humanProb === undefined) {
       console.warn("Winston response missing score:", JSON.stringify(data).substring(0, 500));
@@ -416,7 +414,7 @@ function parseWinstonResponse(data: any): WinstonDetectionResult {
     const winstonScore = Math.round(score ?? (humanProb * 100));
     const isAIGenerated = winstonScore < 50;
 
-    const severity = isAIGenerated
+    const severity: "low" | "medium" | "high" = isAIGenerated
       ? (winstonScore < 20 ? "high" : winstonScore < 40 ? "medium" : "low")
       : (winstonScore > 80 ? "low" : "medium");
 
@@ -539,16 +537,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Run 3 engines in parallel: ELA, Hugging Face, Winston AI
-  const [pythonResult, hfResult, winstonResult] = await Promise.all([
+  // Run 3 engines in parallel: ELA, AI Vision (Gemini), Winston AI
+  const [pythonResult, aiVisionResult, winstonResult] = await Promise.all([
     callPythonELA(uint8, fileName),
-    analyzeWithHuggingFace(uint8, mimeType),
+    analyzeWithAIVision(uint8, mimeType),
     analyzeWithWinston(uint8, mimeType),
   ]);
 
-  // ELA (weight: 30)
+  // ELA (weight: 25)
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.overall_score, weight: 30 });
+    engines.push({ name: "ELA", score: pythonResult.overall_score, weight: 25 });
     for (const f of pythonResult.findings) {
       findings.push({ category: `ELA: ${f.category}`, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
     }
@@ -558,18 +556,17 @@ async function runAllEngines(
     exifExtras["ELA Analysis"] = "Completed";
   }
 
-  // Hugging Face (weight: 40)
-  if (hfResult) {
-    engines.push({ name: "Hugging Face", score: hfResult.hfScore, weight: 40 });
-    for (const f of hfResult.findings) findings.push(f);
-    exifExtras["HF AI Detection"] = hfResult.rawLabel;
-    exifExtras["HF Score"] = `${hfResult.hfScore}/100`;
-    exifExtras["HF Confidence"] = `${(hfResult.confidence * 100).toFixed(1)}%`;
+  // AI Vision / Gemini (weight: 40)
+  if (aiVisionResult) {
+    engines.push({ name: "AI Vision", score: aiVisionResult.aiScore, weight: 40 });
+    for (const f of aiVisionResult.findings) findings.push(f);
+    exifExtras["AI Vision Score"] = `${aiVisionResult.aiScore}/100`;
+    exifExtras["AI Vision Verdict"] = aiVisionResult.isAIGenerated ? "AI-Generated" : "Human-Created";
   }
 
-  // Winston AI (weight: 30)
+  // Winston AI (weight: 35)
   if (winstonResult) {
-    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 30 });
+    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 35 });
     for (const f of winstonResult.findings) findings.push(f);
     exifExtras["Winston Score"] = `${winstonResult.winstonScore}/100`;
     exifExtras["Winston AI Detection"] = winstonResult.isAIGenerated ? "AI-Generated" : "Human-Created";
@@ -644,7 +641,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, Hugging Face, Winston) were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, AI Vision, Winston) were available." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${fileType} analysis`, severity: "low", description: "Deep analysis is only available for images." });
