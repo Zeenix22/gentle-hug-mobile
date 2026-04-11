@@ -201,12 +201,20 @@ async function analyzeWithAIVision(uint8: Uint8Array, mimeType: string): Promise
   }
 
   try {
-    const CHUNK = 8192;
-    let base64 = "";
+    // Convert to base64 properly (handle large images without chunking issues)
     const len = Math.min(uint8.length, 4_000_000); // 4MB limit for vision
-    for (let i = 0; i < len; i += CHUNK) {
-      base64 += btoa(String.fromCharCode(...uint8.slice(i, Math.min(i + CHUNK, len))));
+    const slice = uint8.length > len ? uint8.slice(0, len) : uint8;
+    
+    // Use btoa on full binary string to avoid padding issues from chunking
+    let binaryStr = "";
+    const CHUNK = 8192;
+    for (let i = 0; i < slice.length; i += CHUNK) {
+      const end = Math.min(i + CHUNK, slice.length);
+      for (let j = i; j < end; j++) {
+        binaryStr += String.fromCharCode(slice[j]);
+      }
     }
+    const base64 = btoa(binaryStr);
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
