@@ -671,15 +671,15 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
 
     let authenticityLevel: string;
     let summary: string;
-    if (finalScore >= 75) {
+    if (finalScore >= 85) {
       authenticityLevel = "authentic";
-      summary = "Analysis indicates this image is authentic with high confidence.";
+      summary = `This image is classified as human-created with a confidence score of ${finalScore}%. No significant signs of AI generation or manipulation were detected.`;
     } else if (finalScore >= 35) {
       authenticityLevel = "suspicious";
-      summary = "Analysis shows indicators of possible modification or AI generation.";
+      summary = `This image shows signs of digital editing or manipulation. Confidence score: ${finalScore}%. Some elements appear altered while others remain authentic.`;
     } else {
       authenticityLevel = "manipulated";
-      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
+      summary = `This image is classified as AI-generated with high confidence. Score: ${finalScore}%. Multiple indicators of artificial generation were detected.`;
     }
 
     const result = {
@@ -822,15 +822,15 @@ Deno.serve(async (req) => {
 
     let authenticityLevel: string;
     let summary: string;
-    if (finalScore >= 75) {
+    if (finalScore >= 85) {
       authenticityLevel = "authentic";
-      summary = "Analysis indicates this image is authentic with high confidence.";
+      summary = `This image is classified as human-created with a confidence score of ${finalScore}%. No significant signs of AI generation or manipulation were detected.`;
     } else if (finalScore >= 35) {
       authenticityLevel = "suspicious";
-      summary = "Analysis shows indicators of possible modification or AI generation.";
+      summary = `This image shows signs of digital editing or manipulation. Confidence score: ${finalScore}%. Some elements appear altered while others remain authentic.`;
     } else {
       authenticityLevel = "manipulated";
-      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
+      summary = `This image is classified as AI-generated with high confidence. Score: ${finalScore}%. Multiple indicators of artificial generation were detected.`;
     }
 
     const hashInfo = { sha256, md5: "n/a", isModified: authenticityLevel !== "authentic" };
