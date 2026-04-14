@@ -186,7 +186,7 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
 // ─── AI Vision Analysis (Lovable AI Gateway / Gemini) ───────────────────────
 
 interface AIVisionResult {
-  aiScore: number; // 0-100 where 100 = definitely human, 0 = definitely AI
+  aiScore: number; // 0-100 where 100 = definitely human/real, 0 = definitely AI
   isAIGenerated: boolean;
   confidence: number;
   analysis: string;
@@ -201,11 +201,8 @@ async function analyzeWithAIVision(uint8: Uint8Array, mimeType: string): Promise
   }
 
   try {
-    // Convert to base64 properly (handle large images without chunking issues)
-    const len = Math.min(uint8.length, 4_000_000); // 4MB limit for vision
+    const len = Math.min(uint8.length, 4_000_000);
     const slice = uint8.length > len ? uint8.slice(0, len) : uint8;
-    
-    // Use btoa on full binary string to avoid padding issues from chunking
     let binaryStr = "";
     const CHUNK = 8192;
     for (let i = 0; i < slice.length; i += CHUNK) {
@@ -227,36 +224,50 @@ async function analyzeWithAIVision(uint8: Uint8Array, mimeType: string): Promise
         messages: [
           {
             role: "system",
-            content: `You are an expert AI image forensics analyst. Analyze the provided image and determine if it is:
-1. AI-generated (by tools like Midjourney, DALL-E, Stable Diffusion, Flux, etc.)
-2. Digitally manipulated/edited (Photoshop, face-swap, etc.)
-3. An authentic/real photograph
+            content: `You are a world-class AI image forensics expert. Your task is to classify an image into one of three categories and assign a precise human_score.
 
-Look for these specific indicators:
-- Unnatural textures, too-smooth skin, plastic-like surfaces
-- Inconsistent lighting and shadows
-- Distorted or melted backgrounds, objects, text
-- Anatomical errors (extra fingers, asymmetric features, weird ears/teeth)
-- Repetitive patterns or artifacts typical of diffusion models
-- Too-perfect symmetry or unnaturally uniform details
-- Lack of natural camera noise/grain
-- Inconsistent depth of field
-- Signs of deepfake (face boundary artifacts, inconsistent skin tone)
+## SCORING RULES (follow these EXACTLY):
 
-You MUST respond with ONLY valid JSON in this exact format:
+### Category 1: AI-Generated Image (score 0-10)
+Assign 0-10 if the image was created by AI (Midjourney, DALL-E, Stable Diffusion, Flux, Adobe Firefly, etc.).
+Key signs: unnaturally perfect skin/textures, melted or distorted backgrounds, impossible anatomy (extra fingers, fused limbs), text artifacts, hyper-smooth gradients, repetitive micro-patterns, no natural camera noise, inconsistent perspective, perfect but unnatural lighting, "too perfect" look.
+- 0-3: Obviously AI (clear artifacts, distortions)
+- 4-7: Likely AI (subtle but detectable signs)
+- 8-10: Possibly AI (very high quality but still detectable)
+
+### Category 2: Edited/Manipulated Image (score 40-65)
+Assign 40-65 if the image is a REAL photo that has been digitally edited/manipulated (Photoshop, face-swap, compositing, airbrushing, object removal, background replacement).
+Key signs: inconsistent lighting between elements, clone stamp artifacts, edge inconsistencies around modified regions, mismatched noise levels, unnatural color transitions at boundaries, splicing evidence.
+- 40-50: Heavily manipulated
+- 51-60: Moderately edited
+- 61-65: Lightly edited (filters, retouching)
+
+### Category 3: Authentic/Real Image (score 85-100)
+Assign 85-100 if the image is a genuine, unmanipulated photograph.
+Key signs: consistent natural noise/grain throughout, natural lens distortion, realistic depth of field, authentic motion blur, consistent lighting/shadows, natural skin texture with pores, EXIF-consistent characteristics.
+- 85-90: Authentic but lower quality or compressed
+- 91-95: Clearly authentic photograph
+- 96-100: Pristine authentic photo with strong evidence
+
+## IMPORTANT:
+- Be DECISIVE. Do not hedge with scores in the 20-39 or 66-84 ranges unless you genuinely cannot tell.
+- Most AI images are detectable — look carefully at fine details, backgrounds, hands, text, reflections.
+- Most real photos have natural imperfections — noise, slight blur, lens artifacts.
+- Screenshots, memes, or digital art should be scored based on whether AI generated the content.
+
+Respond with ONLY valid JSON:
 {
-  "human_score": <number 0-100, where 100 means definitely real/human-created, 0 means definitely AI>,
-  "is_ai": <boolean>,
+  "human_score": <number 0-100>,
+  "category": "<ai_generated|edited|authentic>",
   "confidence": <number 0.0-1.0>,
-  "verdict": "<one of: authentic, ai_generated, manipulated, uncertain>",
-  "reasoning": "<2-3 sentence explanation>",
-  "indicators": ["<list of specific indicators found>"]
+  "reasoning": "<2-3 sentence explanation of specific evidence found>",
+  "indicators": ["<specific evidence 1>", "<specific evidence 2>", "..."]
 }`
           },
           {
             role: "user",
             content: [
-              { type: "text", text: "Analyze this image for AI generation or manipulation. Be thorough and precise." },
+              { type: "text", text: "Classify this image. Examine fine details: hands, text, backgrounds, textures, noise patterns, lighting consistency. Be decisive." },
               {
                 type: "image_url",
                 image_url: {
@@ -266,8 +277,8 @@ You MUST respond with ONLY valid JSON in this exact format:
             ],
           },
         ],
-        temperature: 0.1,
-        max_tokens: 1000,
+        temperature: 0.05,
+        max_tokens: 800,
       }),
     });
 
@@ -281,7 +292,6 @@ You MUST respond with ONLY valid JSON in this exact format:
     const content = data.choices?.[0]?.message?.content || "";
     console.log("AI Vision raw response:", content.substring(0, 500));
 
-    // Parse JSON from the response (handle markdown code blocks)
     let parsed: any;
     try {
       const jsonMatch = content.match(/```json\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
@@ -292,20 +302,29 @@ You MUST respond with ONLY valid JSON in this exact format:
       return null;
     }
 
-    const humanScore = Math.max(0, Math.min(100, Math.round(parsed.human_score ?? 50)));
-    const isAI = parsed.is_ai === true;
+    let humanScore = Math.max(0, Math.min(100, Math.round(parsed.human_score ?? 50)));
+    const category = parsed.category || "uncertain";
     const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
+
+    // Enforce scoring bands based on category to prevent wishy-washy scores
+    if (category === "ai_generated" && humanScore > 15) humanScore = Math.min(humanScore, 10);
+    if (category === "authentic" && humanScore < 80) humanScore = Math.max(humanScore, 85);
+    if (category === "edited" && (humanScore < 35 || humanScore > 70)) {
+      humanScore = Math.max(40, Math.min(65, humanScore));
+    }
+
+    const isAI = category === "ai_generated";
     const findings: AIVisionResult["findings"] = [];
 
-    const severity: "low" | "medium" | "high" = isAI
-      ? (confidence > 0.85 ? "high" : confidence > 0.6 ? "medium" : "low")
-      : (confidence > 0.85 ? "low" : "medium");
+    const severity: "low" | "medium" | "high" = isAI ? "high" : category === "edited" ? "medium" : "low";
 
     findings.push({
       category: "AI Vision Analysis",
       finding: isAI
-        ? `Image likely AI-generated (${(100 - humanScore)}% AI probability)`
-        : `Image likely authentic (${humanScore}% human probability)`,
+        ? `AI-generated image detected (confidence: ${Math.round(confidence * 100)}%)`
+        : category === "edited"
+        ? `Edited/manipulated image detected (confidence: ${Math.round(confidence * 100)}%)`
+        : `Authentic image (confidence: ${Math.round(confidence * 100)}%)`,
       severity,
       description: parsed.reasoning || "AI vision model analysis completed.",
     });
@@ -315,7 +334,7 @@ You MUST respond with ONLY valid JSON in this exact format:
         findings.push({
           category: "AI Vision: Indicator",
           finding: String(indicator),
-          severity: isAI ? "medium" : "low",
+          severity: isAI ? "high" : category === "edited" ? "medium" : "low",
           description: `Detected during visual forensic analysis.`,
         });
       }
@@ -652,15 +671,15 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
 
     let authenticityLevel: string;
     let summary: string;
-    if (finalScore >= 75) {
+    if (finalScore >= 85) {
       authenticityLevel = "authentic";
-      summary = "Analysis indicates this image is authentic with high confidence.";
+      summary = `This image is classified as human-created with a confidence score of ${finalScore}%. No significant signs of AI generation or manipulation were detected.`;
     } else if (finalScore >= 35) {
       authenticityLevel = "suspicious";
-      summary = "Analysis shows indicators of possible modification or AI generation.";
+      summary = `This image shows signs of digital editing or manipulation. Confidence score: ${finalScore}%. Some elements appear altered while others remain authentic.`;
     } else {
       authenticityLevel = "manipulated";
-      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
+      summary = `This image is classified as AI-generated with high confidence. Score: ${finalScore}%. Multiple indicators of artificial generation were detected.`;
     }
 
     const result = {
@@ -803,15 +822,15 @@ Deno.serve(async (req) => {
 
     let authenticityLevel: string;
     let summary: string;
-    if (finalScore >= 75) {
+    if (finalScore >= 85) {
       authenticityLevel = "authentic";
-      summary = "Analysis indicates this image is authentic with high confidence.";
+      summary = `This image is classified as human-created with a confidence score of ${finalScore}%. No significant signs of AI generation or manipulation were detected.`;
     } else if (finalScore >= 35) {
       authenticityLevel = "suspicious";
-      summary = "Analysis shows indicators of possible modification or AI generation.";
+      summary = `This image shows signs of digital editing or manipulation. Confidence score: ${finalScore}%. Some elements appear altered while others remain authentic.`;
     } else {
       authenticityLevel = "manipulated";
-      summary = "Analysis strongly indicates this image is AI-generated or heavily manipulated.";
+      summary = `This image is classified as AI-generated with high confidence. Score: ${finalScore}%. Multiple indicators of artificial generation were detected.`;
     }
 
     const hashInfo = { sha256, md5: "n/a", isModified: authenticityLevel !== "authentic" };
