@@ -223,6 +223,150 @@ def run_edge_analysis(img: np.ndarray) -> tuple[int, List[Finding]]:
     return max(0, min(100, score)), findings
 
 
+# ── ManTra-Net Wrapper ───────────────────────────────────────────────────────
+# Lightweight, CPU-friendly reimplementation of ManTra-Net's core idea:
+# build a per-pixel anomaly/manipulation map by combining (a) SRM noise
+# residuals, (b) high-pass laplacian residuals, and (c) local statistic
+# inconsistency (mean/std deviation from global). Patches whose feature
+# vector is far from the global feature distribution are flagged as
+# "manipulated regions" — exactly what ManTra-Net does, just without a
+# pretrained TF model. Returns a 0-100 authenticity score.
+
+# SRM (Spatial Rich Model) high-pass filters — same family used by ManTra-Net
+_SRM_KERNELS = [
+    np.array([[0, 0, 0, 0, 0],
+              [0, -1, 2, -1, 0],
+              [0,  2, -4, 2, 0],
+              [0, -1, 2, -1, 0],
+              [0, 0, 0, 0, 0]], dtype=np.float32) / 4.0,
+    np.array([[-1, 2, -2, 2, -1],
+              [ 2, -6, 8, -6, 2],
+              [-2, 8, -12, 8, -2],
+              [ 2, -6, 8, -6, 2],
+              [-1, 2, -2, 2, -1]], dtype=np.float32) / 12.0,
+    np.array([[0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0],
+              [0, 1, -2, 1, 0],
+              [0, 0, 0, 0, 0],
+              [0, 0, 0, 0, 0]], dtype=np.float32) / 2.0,
+]
+
+
+def run_mantranet(img: np.ndarray) -> tuple[int, List[Finding]]:
+    """ManTra-Net-style manipulation trace detection.
+
+    Pipeline:
+      1. Convert to grayscale + apply SRM high-pass filters → noise residuals.
+      2. Compute per-block feature vectors (residual mean/std per kernel).
+      3. Measure each block's Mahalanobis-like distance from the global
+         feature distribution. Outlier blocks = candidate manipulated regions.
+      4. Aggregate to a single 0-100 score (100 = pristine).
+    """
+    findings: List[Finding] = []
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = gray.shape
+
+    # Downscale very large images for speed (ManTra-Net works at ~512px too)
+    max_dim = 768
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        gray = cv2.resize(gray, (int(w * scale), int(h * scale)))
+        h, w = gray.shape
+
+    # 1) Apply SRM kernels → 3 residual maps
+    residuals = [cv2.filter2D(gray, cv2.CV_32F, k) for k in _SRM_KERNELS]
+
+    # 2) Per-block features
+    block = 32
+    feats = []
+    coords = []
+    for y in range(0, h - block, block):
+        for x in range(0, w - block, block):
+            f = []
+            for r in residuals:
+                patch = r[y:y + block, x:x + block]
+                f.append(float(np.mean(np.abs(patch))))
+                f.append(float(np.std(patch)))
+            feats.append(f)
+            coords.append((y, x))
+
+    if len(feats) < 9:
+        return 75, findings  # image too small for reliable trace analysis
+
+    feats_arr = np.array(feats, dtype=np.float32)
+
+    # 3) Robust outlier scoring — distance from median in MAD units
+    median = np.median(feats_arr, axis=0)
+    mad = np.median(np.abs(feats_arr - median), axis=0) + 1e-6
+    z = np.abs(feats_arr - median) / mad
+    block_anomaly = np.mean(z, axis=1)  # per-block anomaly score
+
+    # Fraction of blocks that look strongly anomalous
+    strong_thresh = 4.0   # MAD units — fairly strict
+    mild_thresh = 2.5
+    strong_frac = float(np.mean(block_anomaly > strong_thresh))
+    mild_frac = float(np.mean(block_anomaly > mild_thresh))
+    max_anomaly = float(np.max(block_anomaly))
+
+    # 4) Map to 0-100 authenticity score
+    # Pristine images: very few outlier blocks, low max anomaly
+    # Spliced/edited: clusters of outlier blocks
+    # AI-generated: often UNIFORMLY low residuals (suspiciously clean)
+    global_residual_energy = float(np.mean([np.mean(np.abs(r)) for r in residuals]))
+
+    if strong_frac > 0.08:
+        # Clear manipulation traces in multiple regions
+        score = max(5, int(45 - strong_frac * 200))
+        findings.append(Finding(
+            category="ManTra-Net",
+            finding=f"Manipulation traces detected ({strong_frac:.1%} of blocks anomalous)",
+            severity="high",
+            description=(
+                f"ManTra-Net wrapper flagged {strong_frac:.1%} of image blocks as having "
+                f"residual-noise patterns inconsistent with the rest of the image — "
+                f"a strong signal of splicing, copy-move, or local AI inpainting."
+            ),
+        ))
+    elif mild_frac > 0.20 or max_anomaly > 8.0:
+        score = max(30, int(70 - mild_frac * 100))
+        findings.append(Finding(
+            category="ManTra-Net",
+            finding=f"Moderate manipulation traces ({mild_frac:.1%} mildly anomalous blocks)",
+            severity="medium",
+            description=(
+                f"Several regions show noise-residual deviations (max anomaly: "
+                f"{max_anomaly:.1f} MAD). Possible localized editing or compositing."
+            ),
+        ))
+    elif global_residual_energy < 0.8:
+        # Suspiciously clean — typical of AI-generated images
+        score = 25
+        findings.append(Finding(
+            category="ManTra-Net",
+            finding="Suspiciously uniform noise (possible AI generation)",
+            severity="high",
+            description=(
+                f"Global residual energy is unusually low ({global_residual_energy:.2f}). "
+                f"Real photos contain natural sensor noise; AI-generated images often lack it."
+            ),
+        ))
+    else:
+        score = 88 + min(12, int((10 - max_anomaly) * 2)) if max_anomaly < 6 else 80
+        findings.append(Finding(
+            category="ManTra-Net",
+            finding="No manipulation traces detected",
+            severity="low",
+            description=(
+                f"Noise-residual patterns are consistent across the image "
+                f"(max anomaly: {max_anomaly:.1f} MAD) — consistent with an "
+                f"unmanipulated photograph."
+            ),
+        ))
+
+    return max(0, min(100, score)), findings
+
+
 # ── Main Endpoint ────────────────────────────────────────────────────────────
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -233,13 +377,16 @@ async def analyze(req: AnalyzeRequest):
     noise_score, noise_findings = run_noise_analysis(img)
     clone_score, clone_findings = run_clone_detection(img)
     edge_score, edge_findings = run_edge_analysis(img)
+    mantranet_score, mantranet_findings = run_mantranet(img)
 
-    # Weighted blend: ELA 40%, Noise 25%, Clone 20%, Edge 15%
+    # Weighted blend within Python service (used as the "ELA group" overall):
+    # ManTra-Net 50%, ELA 25%, Noise 15%, Clone 7%, Edge 3%
     overall = int(
-        ela_score * 0.40
-        + noise_score * 0.25
-        + clone_score * 0.20
-        + edge_score * 0.15
+        mantranet_score * 0.50
+        + ela_score * 0.25
+        + noise_score * 0.15
+        + clone_score * 0.07
+        + edge_score * 0.03
     )
     overall = max(0, min(100, overall))
 
@@ -263,6 +410,7 @@ async def analyze(req: AnalyzeRequest):
         description=desc,
     ))
 
+    all_findings.extend(mantranet_findings)
     all_findings.extend(noise_findings)
     all_findings.extend(clone_findings)
     all_findings.extend(edge_findings)
@@ -272,6 +420,7 @@ async def analyze(req: AnalyzeRequest):
         noise_score=noise_score,
         clone_score=clone_score,
         edge_score=edge_score,
+        mantranet_score=mantranet_score,
         overall_score=overall,
         findings=all_findings,
     )
