@@ -145,6 +145,7 @@ interface PythonAnalysisResult {
   noise_score: number;
   clone_score: number;
   edge_score: number;
+  mantranet_score?: number;
   overall_score: number;
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
@@ -563,36 +564,44 @@ async function runAllEngines(
     analyzeWithWinston(uint8, mimeType),
   ]);
 
-  // ELA (weight: 25)
+  // ELA group (weight: 10) — ELA + supporting forensics
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.overall_score, weight: 25 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 10 });
     for (const f of pythonResult.findings) {
-      findings.push({ category: `ELA: ${f.category}`, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
+      // ManTra-Net findings are surfaced under their own category — don't double-prefix
+      const cat = f.category === "ManTra-Net" ? f.category : `ELA: ${f.category}`;
+      findings.push({ category: cat, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
     }
     exifExtras["ELA Score"] = `${pythonResult.ela_score}/100`;
     exifExtras["Noise Consistency"] = `${pythonResult.noise_score}/100`;
     exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
+
+    // ManTra-Net (weight: 35) — heavy weight for manipulation detection
+    if (typeof pythonResult.mantranet_score === "number") {
+      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 35 });
+      exifExtras["ManTra-Net Score"] = `${pythonResult.mantranet_score}/100`;
+    }
   }
 
-  // AI Vision / Gemini (weight: 40)
+  // AI Vision / Gemini (weight: 30)
   if (aiVisionResult) {
-    engines.push({ name: "AI Vision", score: aiVisionResult.aiScore, weight: 40 });
+    engines.push({ name: "AI Vision", score: aiVisionResult.aiScore, weight: 30 });
     for (const f of aiVisionResult.findings) findings.push(f);
     exifExtras["AI Vision Score"] = `${aiVisionResult.aiScore}/100`;
     exifExtras["AI Vision Verdict"] = aiVisionResult.isAIGenerated ? "AI-Generated" : "Human-Created";
   }
 
-  // Winston AI (weight: 35)
+  // Winston AI (weight: 25)
   if (winstonResult) {
-    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 35 });
+    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 25 });
     for (const f of winstonResult.findings) findings.push(f);
     exifExtras["Winston Score"] = `${winstonResult.winstonScore}/100`;
     exifExtras["Winston AI Detection"] = winstonResult.isAIGenerated ? "AI-Generated" : "Human-Created";
   }
 
   const engineNames = engines.map(e => e.name).join(", ");
-  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/3)`);
+  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/4)`);
 
   return { engines, findings, exifExtras };
 }
