@@ -14,6 +14,7 @@ import {
   Brain,
   Cpu,
   Eye,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -175,23 +176,27 @@ const Analysis = () => {
         const elaScoreStr = result.exifData?.["ELA Score"];
         const hfScoreStr = result.exifData?.["AI Vision Score"] || result.exifData?.["HF Score"];
         const winstonScoreStr = result.exifData?.["Winston Score"];
+        const mantranetScoreStr = result.exifData?.["ManTra-Net Score"];
         const hasELA = !!elaScoreStr;
         const hasHF = !!hfScoreStr;
         const hasWinston = !!winstonScoreStr;
+        const hasMantranet = !!mantranetScoreStr;
         const elaScore = hasELA ? parseInt(elaScoreStr!.replace("/100", "")) : null;
         const hfScore = hasHF ? parseInt(hfScoreStr!.replace("/100", "")) : null;
         const winstonScore = hasWinston ? parseInt(winstonScoreStr!.replace("/100", "")) : null;
+        const mantranetScore = hasMantranet ? parseInt(mantranetScoreStr!.replace("/100", "")) : null;
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
 
         const engines = [
+          { label: "ManTra-Net (Manipulation Trace)", icon: Layers, score: mantranetScore, has: hasMantranet, desc: "Deep manipulation-trace detection: SRM noise residuals + per-region anomaly scoring to detect splicing, copy-move, and AI inpainting", offDesc: "Requires the Python microservice." },
           { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, has: hasELA, desc: "Pixel-level error analysis, noise consistency, and clone detection", offDesc: "ELA requires the Python microservice." },
           { label: "AI Vision Analysis (Gemini)", icon: Eye, score: hfScore, has: hasHF, desc: "Advanced AI vision model analyzing textures, artifacts, and visual patterns for AI-generation detection", offDesc: "Requires LOVABLE_API_KEY." },
           { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, has: hasWinston, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
         ];
 
-        const hasAny = hasELA || hasHF || hasWinston;
+        const hasAny = hasELA || hasHF || hasWinston || hasMantranet;
 
         return (
           <Card className="border-border animate-fade-in" style={{ animationDelay: "0.12s", opacity: 0 }}>
