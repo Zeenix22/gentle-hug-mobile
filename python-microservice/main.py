@@ -44,6 +44,7 @@ class AnalyzeResponse(BaseModel):
     noise_score: int
     clone_score: int
     edge_score: int
+    mantranet_score: int
     overall_score: int
     findings: List[Finding]
 
