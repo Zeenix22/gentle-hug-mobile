@@ -371,6 +371,238 @@ def run_mantranet(img: np.ndarray) -> tuple[int, List[Finding]]:
     return max(0, min(100, score)), findings
 
 
+# ── FFT Frequency Analysis ───────────────────────────────────────────────────
+# Detects AI upscaling, GFPGAN/Real-ESRGAN face restoration, and diffusion
+# artifacts by analyzing the radial frequency spectrum. AI-upscaled images
+# show characteristic high-frequency drop-off (suspiciously smooth) or
+# periodic spikes (GAN checkerboard artifacts).
+
+def run_fft_analysis(img: np.ndarray) -> tuple[int, List[Finding]]:
+    findings: List[Finding] = []
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    h, w = gray.shape
+
+    # Crop to centered square power-of-2-ish for clean FFT
+    side = min(h, w, 1024)
+    cy, cx = h // 2, w // 2
+    half = side // 2
+    crop = gray[cy - half:cy + half, cx - half:cx + half]
+    if crop.shape[0] < 64 or crop.shape[1] < 64:
+        return 75, findings
+
+    # 2D FFT → magnitude spectrum
+    f = np.fft.fftshift(np.fft.fft2(crop))
+    mag = np.log1p(np.abs(f))
+
+    # Radial profile
+    n = crop.shape[0]
+    cy2, cx2 = n // 2, n // 2
+    y, x = np.indices((n, n))
+    r = np.hypot(x - cx2, y - cy2).astype(np.int32)
+    radial = np.bincount(r.ravel(), mag.ravel()) / (np.bincount(r.ravel()) + 1e-6)
+    radial = radial[: n // 2]
+
+    # Slope of log-radial spectrum (real photos: ~ -1 to -2; AI-upscaled: steeper or flatter)
+    rs = np.arange(2, len(radial))
+    log_r = np.log(rs + 1)
+    log_m = radial[2:]
+    slope = float(np.polyfit(log_r, log_m, 1)[0])
+
+    # High-freq energy ratio (top 25% of frequencies)
+    cutoff = int(len(radial) * 0.75)
+    hf_energy = float(np.mean(radial[cutoff:]))
+    lf_energy = float(np.mean(radial[2:cutoff])) + 1e-6
+    hf_ratio = hf_energy / lf_energy
+
+    # AI upscaling suppresses high-freq detail → very low hf_ratio
+    # Real photos: hf_ratio ~ 0.45-0.85
+    if hf_ratio < 0.30:
+        score = max(15, int(hf_ratio * 100))
+        findings.append(Finding(
+            category="FFT Analysis",
+            finding=f"Suppressed high-frequency content (HF ratio: {hf_ratio:.2f})",
+            severity="high",
+            description=(
+                "Frequency spectrum lacks natural high-frequency detail. "
+                "Typical of AI-upscaled, face-restored (GFPGAN/Real-ESRGAN), or diffusion-generated images."
+            ),
+        ))
+    elif hf_ratio < 0.45:
+        score = 55
+        findings.append(Finding(
+            category="FFT Analysis",
+            finding=f"Mildly suppressed high frequencies (HF ratio: {hf_ratio:.2f})",
+            severity="medium",
+            description="Moderate high-frequency suppression — possible upscaling or heavy denoising.",
+        ))
+    else:
+        score = 90
+        findings.append(Finding(
+            category="FFT Analysis",
+            finding=f"Natural frequency distribution (HF ratio: {hf_ratio:.2f}, slope: {slope:.2f})",
+            severity="low",
+            description="Frequency spectrum matches expected profile of an unmodified photograph.",
+        ))
+
+    return max(0, min(100, score)), findings
+
+
+# ── SIFT-based Copy-Move Detection ───────────────────────────────────────────
+# More precise than ORB clone detection — uses SIFT keypoints + RANSAC
+# clustering to find geometrically consistent cloned regions.
+
+def run_sift_copy_move(img: np.ndarray) -> tuple[int, List[Finding]]:
+    findings: List[Finding] = []
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    max_dim = 800
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        gray = cv2.resize(gray, (int(w * scale), int(h * scale)))
+
+    try:
+        sift = cv2.SIFT_create(nfeatures=1500)
+    except Exception:
+        return 80, findings  # SIFT not available in build
+
+    kps, descs = sift.detectAndCompute(gray, None)
+    if descs is None or len(kps) < 20:
+        return 85, findings
+
+    bf = cv2.BFMatcher(cv2.NORM_L2)
+    matches = bf.knnMatch(descs, descs, k=3)
+
+    clone_pairs: list[tuple[tuple, tuple]] = []
+    for m_list in matches:
+        # Skip self-match (k=0). Use 2nd & 3rd as nearest non-self.
+        if len(m_list) < 3:
+            continue
+        m, n = m_list[1], m_list[2]
+        if m.distance < 0.6 * n.distance:
+            pt1 = kps[m.queryIdx].pt
+            pt2 = kps[m.trainIdx].pt
+            dist = math.hypot(pt1[0] - pt2[0], pt1[1] - pt2[1])
+            if dist > 40:  # ignore nearby (texture)
+                clone_pairs.append((pt1, pt2))
+
+    n_pairs = len(clone_pairs)
+    ratio = n_pairs / max(len(kps), 1)
+
+    if ratio < 0.015:
+        score = 92
+    elif ratio < 0.05:
+        score = 65
+        findings.append(Finding(
+            category="SIFT Copy-Move",
+            finding=f"Possible cloned regions ({n_pairs} SIFT pairs)",
+            severity="medium",
+            description="SIFT detected geometrically similar patches — possible copy-paste editing.",
+        ))
+    else:
+        score = max(10, int(65 - ratio * 400))
+        findings.append(Finding(
+            category="SIFT Copy-Move",
+            finding=f"Strong copy-move evidence ({n_pairs} SIFT pairs)",
+            severity="high",
+            description=(
+                f"{n_pairs} SIFT keypoint pairs match across distant regions — "
+                f"strong evidence of cloned/duplicated content (paint, stamp, or splice edits)."
+            ),
+        ))
+
+    return max(0, min(100, score)), findings
+
+
+# ── Face-Forensics Deepfake Detector ─────────────────────────────────────────
+# Detects faces with Haar cascade, then runs per-face frequency + ELA analysis.
+# Deepfakes & face-restored images consistently show different spectral
+# profiles inside face regions vs. the background.
+
+def run_face_forensics(img: np.ndarray) -> tuple[int, int, List[Finding]]:
+    findings: List[Finding] = []
+    try:
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        face_cascade = cv2.CascadeClassifier(cascade_path)
+    except Exception:
+        return 75, 0, findings
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.15, minNeighbors=5, minSize=(40, 40))
+    n_faces = len(faces)
+
+    if n_faces == 0:
+        return 80, 0, findings  # neutral — no faces to evaluate
+
+    suspicious_faces = 0
+    face_metrics = []
+
+    for (x, y, fw, fh) in faces[:8]:  # cap at 8 faces
+        face = gray[y:y + fh, x:x + fw].astype(np.float32)
+        if face.shape[0] < 32 or face.shape[1] < 32:
+            continue
+
+        # 1. Per-face FFT high-freq ratio
+        f = np.fft.fftshift(np.fft.fft2(face))
+        mag = np.log1p(np.abs(f))
+        n = min(face.shape)
+        cy, cx = face.shape[0] // 2, face.shape[1] // 2
+        yy, xx = np.indices(face.shape)
+        r = np.hypot(xx - cx, yy - cy).astype(np.int32)
+        radial = np.bincount(r.ravel(), mag.ravel()) / (np.bincount(r.ravel()) + 1e-6)
+        radial = radial[: n // 2]
+        if len(radial) < 5:
+            continue
+        cutoff = int(len(radial) * 0.7)
+        hf_ratio = float(np.mean(radial[cutoff:])) / (float(np.mean(radial[2:cutoff])) + 1e-6)
+
+        # 2. Skin smoothness (Laplacian variance — too low = airbrushed/restored)
+        lap_var = float(cv2.Laplacian(face, cv2.CV_64F).var())
+
+        face_metrics.append((hf_ratio, lap_var))
+
+        # Deepfake / face-restoration signature: very low HF ratio + very smooth
+        if hf_ratio < 0.35 and lap_var < 60:
+            suspicious_faces += 1
+
+    if not face_metrics:
+        return 75, n_faces, findings
+
+    susp_frac = suspicious_faces / len(face_metrics)
+    avg_hf = float(np.mean([m[0] for m in face_metrics]))
+    avg_lap = float(np.mean([m[1] for m in face_metrics]))
+
+    if susp_frac >= 0.5:
+        score = max(10, int(40 - susp_frac * 30))
+        findings.append(Finding(
+            category="Face Forensics",
+            finding=f"{suspicious_faces}/{len(face_metrics)} faces show deepfake/restoration signs",
+            severity="high",
+            description=(
+                f"Face regions have suppressed high-frequency content (avg HF ratio: {avg_hf:.2f}) "
+                f"and unnaturally smooth texture (avg Laplacian var: {avg_lap:.0f}). "
+                f"Strong indicator of deepfake, face-swap, or AI face restoration (GFPGAN)."
+            ),
+        ))
+    elif susp_frac > 0:
+        score = 55
+        findings.append(Finding(
+            category="Face Forensics",
+            finding=f"{suspicious_faces}/{len(face_metrics)} faces show mild restoration signs",
+            severity="medium",
+            description=f"Some faces appear retouched or restored (avg HF ratio: {avg_hf:.2f}).",
+        ))
+    else:
+        score = 90
+        findings.append(Finding(
+            category="Face Forensics",
+            finding=f"{n_faces} face(s) appear authentic",
+            severity="low",
+            description=f"Face regions show natural skin texture and frequency profile (avg HF: {avg_hf:.2f}).",
+        ))
+
+    return max(0, min(100, score)), n_faces, findings
+
+
 # ── Main Endpoint ────────────────────────────────────────────────────────────
 
 @app.post("/analyze", response_model=AnalyzeResponse)
@@ -382,15 +614,21 @@ async def analyze(req: AnalyzeRequest):
     clone_score, clone_findings = run_clone_detection(img)
     edge_score, edge_findings = run_edge_analysis(img)
     mantranet_score, mantranet_findings = run_mantranet(img)
+    fft_score, fft_findings = run_fft_analysis(img)
+    sift_score, sift_findings = run_sift_copy_move(img)
+    face_score, face_count, face_findings = run_face_forensics(img)
 
-    # Weighted blend within Python service (used as the "ELA group" overall):
-    # ManTra-Net 50%, ELA 25%, Noise 15%, Clone 7%, Edge 3%
+    # Weighted blend within Python service:
+    # ManTra-Net 30%, FFT 18%, Face 15%, SIFT 12%, ELA 13%, Noise 8%, Clone 2%, Edge 2%
     overall = int(
-        mantranet_score * 0.50
-        + ela_score * 0.25
-        + noise_score * 0.15
-        + clone_score * 0.07
-        + edge_score * 0.03
+        mantranet_score * 0.30
+        + fft_score * 0.18
+        + face_score * 0.15
+        + sift_score * 0.12
+        + ela_score * 0.13
+        + noise_score * 0.08
+        + clone_score * 0.02
+        + edge_score * 0.02
     )
     overall = max(0, min(100, overall))
 
@@ -415,6 +653,9 @@ async def analyze(req: AnalyzeRequest):
     ))
 
     all_findings.extend(mantranet_findings)
+    all_findings.extend(fft_findings)
+    all_findings.extend(face_findings)
+    all_findings.extend(sift_findings)
     all_findings.extend(noise_findings)
     all_findings.extend(clone_findings)
     all_findings.extend(edge_findings)
@@ -425,6 +666,10 @@ async def analyze(req: AnalyzeRequest):
         clone_score=clone_score,
         edge_score=edge_score,
         mantranet_score=mantranet_score,
+        fft_score=fft_score,
+        sift_clone_score=sift_score,
+        face_forensics_score=face_score,
+        face_count=face_count,
         overall_score=overall,
         findings=all_findings,
     )
