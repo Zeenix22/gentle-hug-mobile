@@ -45,6 +45,10 @@ class AnalyzeResponse(BaseModel):
     clone_score: int
     edge_score: int
     mantranet_score: int
+    fft_score: int
+    sift_clone_score: int
+    face_forensics_score: int
+    face_count: int
     overall_score: int
     findings: List[Finding]
 
