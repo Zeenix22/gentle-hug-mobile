@@ -581,10 +581,31 @@ async function runAllEngines(
     exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
 
-    // ManTra-Net (weight: 35) — heavy weight for manipulation detection
+    // ManTra-Net (weight: 25)
     if (typeof pythonResult.mantranet_score === "number") {
-      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 35 });
+      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 25 });
       exifExtras["ManTra-Net Score"] = `${pythonResult.mantranet_score}/100`;
+    }
+
+    // FFT Frequency Analysis (weight: 15) — catches AI upscaling / face restoration
+    if (typeof pythonResult.fft_score === "number") {
+      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 15 });
+      exifExtras["FFT Score"] = `${pythonResult.fft_score}/100`;
+    }
+
+    // SIFT Copy-Move (weight: 8) — catches local paint/clone edits
+    if (typeof pythonResult.sift_clone_score === "number") {
+      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 8 });
+      exifExtras["SIFT Copy-Move Score"] = `${pythonResult.sift_clone_score}/100`;
+    }
+
+    // Face Forensics (weight: 12) — catches deepfakes & face restoration
+    if (typeof pythonResult.face_forensics_score === "number") {
+      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 12 });
+      exifExtras["Face Forensics Score"] = `${pythonResult.face_forensics_score}/100`;
+      if (typeof pythonResult.face_count === "number") {
+        exifExtras["Faces Detected"] = String(pythonResult.face_count);
+      }
     }
   }
 
