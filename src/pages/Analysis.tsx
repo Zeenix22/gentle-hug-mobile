@@ -246,6 +246,26 @@ const Analysis = () => {
                 );
               })}
 
+              {(c2pa || aiTool) && (
+                <div className="pt-2 border-t border-border space-y-1.5">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <BadgeCheck className="h-3 w-3" /> Provenance Signals
+                  </span>
+                  {c2pa && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">C2PA Content Credentials</span>
+                      <span className={cn("font-semibold", c2pa === "Present" ? "text-success" : "text-muted-foreground/60")}>{c2pa}</span>
+                    </div>
+                  )}
+                  {aiTool && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">AI Tool Detected</span>
+                      <span className="font-semibold text-destructive">{aiTool}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {hasAny && (
                 <div className="pt-2 border-t border-border">
                   <div className="flex items-center justify-between">
