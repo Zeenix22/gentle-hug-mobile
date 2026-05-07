@@ -15,6 +15,10 @@ import {
   Cpu,
   Eye,
   Layers,
+  Activity,
+  Copy,
+  ScanFace,
+  BadgeCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -171,32 +175,37 @@ const Analysis = () => {
         </CardContent>
       </Card>
 
-      {/* Score Breakdown: ELA + Hugging Face */}
+      {/* Score Breakdown */}
       {(() => {
-        const elaScoreStr = result.exifData?.["ELA Score"];
-        const hfScoreStr = result.exifData?.["AI Vision Score"] || result.exifData?.["HF Score"];
-        const winstonScoreStr = result.exifData?.["Winston Score"];
-        const mantranetScoreStr = result.exifData?.["ManTra-Net Score"];
-        const hasELA = !!elaScoreStr;
-        const hasHF = !!hfScoreStr;
-        const hasWinston = !!winstonScoreStr;
-        const hasMantranet = !!mantranetScoreStr;
-        const elaScore = hasELA ? parseInt(elaScoreStr!.replace("/100", "")) : null;
-        const hfScore = hasHF ? parseInt(hfScoreStr!.replace("/100", "")) : null;
-        const winstonScore = hasWinston ? parseInt(winstonScoreStr!.replace("/100", "")) : null;
-        const mantranetScore = hasMantranet ? parseInt(mantranetScoreStr!.replace("/100", "")) : null;
+        const parseScore = (k: string) => {
+          const v = result.exifData?.[k];
+          return v ? parseInt(v.replace("/100", "")) : null;
+        };
+        const elaScore = parseScore("ELA Score");
+        const hfScore = parseScore("AI Vision Score") ?? parseScore("HF Score");
+        const winstonScore = parseScore("Winston Score");
+        const mantranetScore = parseScore("ManTra-Net Score");
+        const fftScore = parseScore("FFT Score");
+        const siftScore = parseScore("SIFT Copy-Move Score");
+        const faceScore = parseScore("Face Forensics Score");
+        const c2pa = result.exifData?.["C2PA Provenance"];
+        const aiTool = result.exifData?.["AI Tool Detected"];
+        const faceCount = result.exifData?.["Faces Detected"];
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
 
         const engines = [
-          { label: "ManTra-Net (Manipulation Trace)", icon: Layers, score: mantranetScore, has: hasMantranet, desc: "Deep manipulation-trace detection: SRM noise residuals + per-region anomaly scoring to detect splicing, copy-move, and AI inpainting", offDesc: "Requires the Python microservice." },
-          { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, has: hasELA, desc: "Pixel-level error analysis, noise consistency, and clone detection", offDesc: "ELA requires the Python microservice." },
-          { label: "AI Vision Analysis (Gemini)", icon: Eye, score: hfScore, has: hasHF, desc: "Advanced AI vision model analyzing textures, artifacts, and visual patterns for AI-generation detection", offDesc: "Requires LOVABLE_API_KEY." },
-          { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, has: hasWinston, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
-        ];
+          { label: "ManTra-Net (Manipulation Trace)", icon: Layers, score: mantranetScore, desc: "SRM noise residuals + per-region anomaly scoring to detect splicing, copy-move, and AI inpainting", offDesc: "Requires the Python microservice." },
+          { label: "FFT Frequency Analysis", icon: Activity, score: fftScore, desc: "Radial frequency spectrum analysis — detects AI upscaling, GFPGAN/Real-ESRGAN face restoration, and diffusion artifacts", offDesc: "Requires the Python microservice." },
+          { label: "Face Forensics (Deepfake)", icon: ScanFace, score: faceScore, desc: `Per-face frequency + texture analysis to detect deepfakes and AI face restoration${faceCount ? ` (${faceCount} face${faceCount === "1" ? "" : "s"} detected)` : ""}`, offDesc: "Requires the Python microservice." },
+          { label: "SIFT Copy-Move Detection", icon: Copy, score: siftScore, desc: "Geometric SIFT keypoint matching to detect cloned/painted/stamped regions within the image", offDesc: "Requires the Python microservice." },
+          { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, desc: "Pixel-level recompression error analysis", offDesc: "ELA requires the Python microservice." },
+          { label: "AI Vision Analysis (Gemini)", icon: Eye, score: hfScore, desc: "Vision LLM analyzing textures, artifacts, and visual patterns for AI-generation detection", offDesc: "Requires LOVABLE_API_KEY." },
+          { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
+        ].map(e => ({ ...e, has: e.score != null }));
 
-        const hasAny = hasELA || hasHF || hasWinston || hasMantranet;
+        const hasAny = engines.some(e => e.has);
 
         return (
           <Card className="border-border animate-fade-in" style={{ animationDelay: "0.12s", opacity: 0 }}>
@@ -236,6 +245,26 @@ const Analysis = () => {
                   </div>
                 );
               })}
+
+              {(c2pa || aiTool) && (
+                <div className="pt-2 border-t border-border space-y-1.5">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <BadgeCheck className="h-3 w-3" /> Provenance Signals
+                  </span>
+                  {c2pa && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">C2PA Content Credentials</span>
+                      <span className={cn("font-semibold", c2pa === "Present" ? "text-success" : "text-muted-foreground/60")}>{c2pa}</span>
+                    </div>
+                  )}
+                  {aiTool && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">AI Tool Detected</span>
+                      <span className="font-semibold text-destructive">{aiTool}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {hasAny && (
                 <div className="pt-2 border-t border-border">

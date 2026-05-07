@@ -146,6 +146,10 @@ interface PythonAnalysisResult {
   clone_score: number;
   edge_score: number;
   mantranet_score?: number;
+  fft_score?: number;
+  sift_clone_score?: number;
+  face_forensics_score?: number;
+  face_count?: number;
   overall_score: number;
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
@@ -524,6 +528,38 @@ function extractMetadata(
     } else if (uint8[0] === 0x47 && uint8[1] === 0x49) {
       exifData = { Format: "GIF" };
     }
+
+    // C2PA / Content Credentials provenance check (scans first 256KB for c2pa marker)
+    const scanLen = Math.min(uint8.length, 262144);
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    const head = decoder.decode(uint8.slice(0, scanLen));
+    const hasC2pa = /c2pa|jumbf|contentauth|urn:uuid:c2pa/i.test(head);
+    const aiSoftware = /(midjourney|stable\s*diffusion|dall-?e|firefly|leonardo|runway|flux|sora|gfpgan|real-?esrgan|topaz|gigapixel)/i;
+    const swMatch = (exifData["Software"] || "").match(aiSoftware) || head.match(aiSoftware);
+
+    if (hasC2pa) {
+      exifData["C2PA Provenance"] = "Present";
+      findings.push({
+        category: "Provenance (C2PA)",
+        finding: "C2PA Content Credentials detected",
+        severity: swMatch ? "high" : "low",
+        description: swMatch
+          ? `Content Credentials manifest indicates AI involvement (${swMatch[0]}).`
+          : "Image carries a C2PA manifest documenting its origin/edit history.",
+      });
+    } else {
+      exifData["C2PA Provenance"] = "Absent";
+    }
+
+    if (swMatch) {
+      exifData["AI Tool Detected"] = swMatch[0];
+      findings.push({
+        category: "Provenance",
+        finding: `AI tool signature: ${swMatch[0]}`,
+        severity: "high",
+        description: `Metadata or embedded markers reference "${swMatch[0]}", a known AI generation/restoration tool.`,
+      });
+    }
   } else if (fileType === "document") {
     exifData = { Format: format.toUpperCase() };
     if (format === "pdf") {
@@ -577,10 +613,31 @@ async function runAllEngines(
     exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
 
-    // ManTra-Net (weight: 35) — heavy weight for manipulation detection
+    // ManTra-Net (weight: 25)
     if (typeof pythonResult.mantranet_score === "number") {
-      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 35 });
+      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 25 });
       exifExtras["ManTra-Net Score"] = `${pythonResult.mantranet_score}/100`;
+    }
+
+    // FFT Frequency Analysis (weight: 15) — catches AI upscaling / face restoration
+    if (typeof pythonResult.fft_score === "number") {
+      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 15 });
+      exifExtras["FFT Score"] = `${pythonResult.fft_score}/100`;
+    }
+
+    // SIFT Copy-Move (weight: 8) — catches local paint/clone edits
+    if (typeof pythonResult.sift_clone_score === "number") {
+      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 8 });
+      exifExtras["SIFT Copy-Move Score"] = `${pythonResult.sift_clone_score}/100`;
+    }
+
+    // Face Forensics (weight: 12) — catches deepfakes & face restoration
+    if (typeof pythonResult.face_forensics_score === "number") {
+      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 12 });
+      exifExtras["Face Forensics Score"] = `${pythonResult.face_forensics_score}/100`;
+      if (typeof pythonResult.face_count === "number") {
+        exifExtras["Faces Detected"] = String(pythonResult.face_count);
+      }
     }
   }
 
