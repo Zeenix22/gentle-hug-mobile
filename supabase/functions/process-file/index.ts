@@ -528,6 +528,38 @@ function extractMetadata(
     } else if (uint8[0] === 0x47 && uint8[1] === 0x49) {
       exifData = { Format: "GIF" };
     }
+
+    // C2PA / Content Credentials provenance check (scans first 256KB for c2pa marker)
+    const scanLen = Math.min(uint8.length, 262144);
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+    const head = decoder.decode(uint8.slice(0, scanLen));
+    const hasC2pa = /c2pa|jumbf|contentauth|urn:uuid:c2pa/i.test(head);
+    const aiSoftware = /(midjourney|stable\s*diffusion|dall-?e|firefly|leonardo|runway|flux|sora|gfpgan|real-?esrgan|topaz|gigapixel)/i;
+    const swMatch = (exifData["Software"] || "").match(aiSoftware) || head.match(aiSoftware);
+
+    if (hasC2pa) {
+      exifData["C2PA Provenance"] = "Present";
+      findings.push({
+        category: "Provenance (C2PA)",
+        finding: "C2PA Content Credentials detected",
+        severity: swMatch ? "high" : "low",
+        description: swMatch
+          ? `Content Credentials manifest indicates AI involvement (${swMatch[0]}).`
+          : "Image carries a C2PA manifest documenting its origin/edit history.",
+      });
+    } else {
+      exifData["C2PA Provenance"] = "Absent";
+    }
+
+    if (swMatch) {
+      exifData["AI Tool Detected"] = swMatch[0];
+      findings.push({
+        category: "Provenance",
+        finding: `AI tool signature: ${swMatch[0]}`,
+        severity: "high",
+        description: `Metadata or embedded markers reference "${swMatch[0]}", a known AI generation/restoration tool.`,
+      });
+    }
   } else if (fileType === "document") {
     exifData = { Format: format.toUpperCase() };
     if (format === "pdf") {
