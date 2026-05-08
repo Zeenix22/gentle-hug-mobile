@@ -593,19 +593,18 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Run 3 engines in parallel: ELA, AI Vision (Gemini), Winston AI
-  const [pythonResult, aiVisionResult, winstonResult] = await Promise.all([
-    callPythonELA(uint8, fileName),
-    analyzeWithAIVision(uint8, mimeType),
-    analyzeWithWinston(uint8, mimeType),
-  ]);
+  // Only Python forensics: ELA + FFT + SIFT + Face Forensics
+  const pythonResult = await callPythonELA(uint8, fileName);
 
-  // ELA group (weight: 10) — ELA + supporting forensics
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 10 });
+    // ELA (weight: 20)
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 20 });
     for (const f of pythonResult.findings) {
-      // ManTra-Net findings are surfaced under their own category — don't double-prefix
-      const cat = f.category === "ManTra-Net" ? f.category : `ELA: ${f.category}`;
+      // Skip ManTra-Net findings — engine is disabled in scoring
+      if (f.category === "ManTra-Net") continue;
+      const cat = f.category.startsWith("FFT") || f.category.startsWith("SIFT") || f.category.startsWith("Face")
+        ? f.category
+        : `ELA: ${f.category}`;
       findings.push({ category: cat, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
     }
     exifExtras["ELA Score"] = `${pythonResult.ela_score}/100`;
@@ -613,48 +612,26 @@ async function runAllEngines(
     exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
 
-    // ManTra-Net (weight: 25)
-    if (typeof pythonResult.mantranet_score === "number") {
-      engines.push({ name: "ManTra-Net", score: pythonResult.mantranet_score, weight: 25 });
-      exifExtras["ManTra-Net Score"] = `${pythonResult.mantranet_score}/100`;
-    }
-
-    // FFT Frequency Analysis (weight: 15) — catches AI upscaling / face restoration
+    // FFT Frequency Analysis (weight: 30) — catches AI upscaling / face restoration
     if (typeof pythonResult.fft_score === "number") {
-      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 15 });
+      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 30 });
       exifExtras["FFT Score"] = `${pythonResult.fft_score}/100`;
     }
 
-    // SIFT Copy-Move (weight: 8) — catches local paint/clone edits
+    // SIFT Copy-Move (weight: 20) — catches local paint/clone edits
     if (typeof pythonResult.sift_clone_score === "number") {
-      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 8 });
+      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 20 });
       exifExtras["SIFT Copy-Move Score"] = `${pythonResult.sift_clone_score}/100`;
     }
 
-    // Face Forensics (weight: 12) — catches deepfakes & face restoration
+    // Face Forensics (weight: 30) — catches deepfakes & face restoration
     if (typeof pythonResult.face_forensics_score === "number") {
-      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 12 });
+      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 30 });
       exifExtras["Face Forensics Score"] = `${pythonResult.face_forensics_score}/100`;
       if (typeof pythonResult.face_count === "number") {
         exifExtras["Faces Detected"] = String(pythonResult.face_count);
       }
     }
-  }
-
-  // AI Vision / Gemini (weight: 30)
-  if (aiVisionResult) {
-    engines.push({ name: "AI Vision", score: aiVisionResult.aiScore, weight: 30 });
-    for (const f of aiVisionResult.findings) findings.push(f);
-    exifExtras["AI Vision Score"] = `${aiVisionResult.aiScore}/100`;
-    exifExtras["AI Vision Verdict"] = aiVisionResult.isAIGenerated ? "AI-Generated" : "Human-Created";
-  }
-
-  // Winston AI (weight: 25)
-  if (winstonResult) {
-    engines.push({ name: "Winston AI", score: winstonResult.winstonScore, weight: 25 });
-    for (const f of winstonResult.findings) findings.push(f);
-    exifExtras["Winston Score"] = `${winstonResult.winstonScore}/100`;
-    exifExtras["Winston AI Detection"] = winstonResult.isAIGenerated ? "AI-Generated" : "Human-Created";
   }
 
   const engineNames = engines.map(e => e.name).join(", ");
