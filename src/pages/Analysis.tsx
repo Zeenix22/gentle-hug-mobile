@@ -196,13 +196,10 @@ const Analysis = () => {
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
 
         const engines = [
-          { label: "ManTra-Net (Manipulation Trace)", icon: Layers, score: mantranetScore, desc: "SRM noise residuals + per-region anomaly scoring to detect splicing, copy-move, and AI inpainting", offDesc: "Requires the Python microservice." },
           { label: "FFT Frequency Analysis", icon: Activity, score: fftScore, desc: "Radial frequency spectrum analysis — detects AI upscaling, GFPGAN/Real-ESRGAN face restoration, and diffusion artifacts", offDesc: "Requires the Python microservice." },
           { label: "Face Forensics (Deepfake)", icon: ScanFace, score: faceScore, desc: `Per-face frequency + texture analysis to detect deepfakes and AI face restoration${faceCount ? ` (${faceCount} face${faceCount === "1" ? "" : "s"} detected)` : ""}`, offDesc: "Requires the Python microservice." },
           { label: "SIFT Copy-Move Detection", icon: Copy, score: siftScore, desc: "Geometric SIFT keypoint matching to detect cloned/painted/stamped regions within the image", offDesc: "Requires the Python microservice." },
           { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, desc: "Pixel-level recompression error analysis", offDesc: "ELA requires the Python microservice." },
-          { label: "AI Vision Analysis (Gemini)", icon: Eye, score: hfScore, desc: "Vision LLM analyzing textures, artifacts, and visual patterns for AI-generation detection", offDesc: "Requires LOVABLE_API_KEY." },
-          { label: "AI Detection (Winston AI)", icon: Shield, score: winstonScore, desc: "Winston AI deep learning model for AI-generated image detection", offDesc: "Requires WINSTON_API_KEY." },
         ].map(e => ({ ...e, has: e.score != null }));
 
         const hasAny = engines.some(e => e.has);
