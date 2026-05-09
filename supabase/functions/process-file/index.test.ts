@@ -52,7 +52,7 @@ Deno.test("function is deployed and reachable", async () => {
 });
 
 // ─── uint8ToBase64 encoding correctness ─────────────────────────────────────
-import { uint8ToBase64 } from "./index.ts";
+import { uint8ToBase64 } from "./encoding.ts";
 import { decodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
