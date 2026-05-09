@@ -163,11 +163,12 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
 
   try {
     const CHUNK = 8192;
-    let base64 = "";
     const len = Math.min(uint8.length, 10_000_000);
+    let binary = "";
     for (let i = 0; i < len; i += CHUNK) {
-      base64 += btoa(String.fromCharCode(...uint8.slice(i, Math.min(i + CHUNK, len))));
+      binary += String.fromCharCode(...uint8.slice(i, Math.min(i + CHUNK, len)));
     }
+    const base64 = btoa(binary);
 
     const response = await fetch(`${pythonUrl}/analyze`, {
       method: "POST",
