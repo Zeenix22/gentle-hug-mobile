@@ -154,8 +154,8 @@ interface PythonAnalysisResult {
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
 
-import { uint8ToBase64 } from "./encoding.ts";
-export { uint8ToBase64 };
+import { uint8ToBase64, validateBase64 } from "./encoding.ts";
+export { uint8ToBase64, validateBase64 };
 
 async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<PythonAnalysisResult | null> {
   const pythonUrl = Deno.env.get("PYTHON_ANALYSIS_URL");
@@ -165,7 +165,19 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
   }
 
   try {
+    const expectedBytes = Math.min(uint8.length, 10_000_000);
     const base64 = uint8ToBase64(uint8);
+
+    // Validate before posting — catches malformed/chunk-encoded base64 locally
+    // instead of paying a network round-trip to get "Cannot decode image".
+    const validation = validateBase64(base64, expectedBytes);
+    if (!validation.ok) {
+      console.error(
+        `Base64 validation failed for ${fileName}: ${validation.reason} ` +
+        `(b64.length=${base64.length}, expectedBytes=${expectedBytes})`,
+      );
+      return null;
+    }
 
     const response = await fetch(`${pythonUrl}/analyze`, {
       method: "POST",
