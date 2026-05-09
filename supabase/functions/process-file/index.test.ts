@@ -97,3 +97,47 @@ Deno.test("uint8ToBase64: respects maxBytes truncation", () => {
   const decoded = decodeBase64(b64);
   assertEquals(decoded.length, 100);
 });
+
+import { validateBase64, uint8ToBase64 as _enc } from "./encoding.ts";
+
+Deno.test("validateBase64: accepts well-formed base64 with correct length", () => {
+  const input = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  const b64 = _enc(input);
+  const v = validateBase64(b64, input.length);
+  assert(v.ok, `expected ok, got: ${v.reason}`);
+  assertEquals(v.decodedLength, input.length);
+});
+
+Deno.test("validateBase64: rejects empty string", () => {
+  const v = validateBase64("");
+  assert(!v.ok);
+  assert(v.reason!.includes("empty"));
+});
+
+Deno.test("validateBase64: rejects length not multiple of 4", () => {
+  const v = validateBase64("AAA");
+  assert(!v.ok);
+  assert(v.reason!.includes("multiple of 4"));
+});
+
+Deno.test("validateBase64: rejects mid-stream '=' padding (chunk-encoding regression)", () => {
+  // Simulate the old bug: btoa() per 8KB chunk → '=' appears mid-stream
+  const chunk1 = btoa("hello");      // "aGVsbG8="
+  const chunk2 = btoa("world!!");    // "d29ybGQhIQ=="
+  const malformed = chunk1 + chunk2;
+  const v = validateBase64(malformed);
+  assert(!v.ok);
+  assert(v.reason!.includes("alphabet") || v.reason!.includes("padding"));
+});
+
+Deno.test("validateBase64: rejects characters outside standard alphabet", () => {
+  const v = validateBase64("AAAA$$$$");
+  assert(!v.ok);
+});
+
+Deno.test("validateBase64: rejects wrong expected byte count", () => {
+  const b64 = _enc(new Uint8Array([1, 2, 3, 4]));
+  const v = validateBase64(b64, 99);
+  assert(!v.ok);
+  assert(v.reason!.includes("decoded length"));
+});
