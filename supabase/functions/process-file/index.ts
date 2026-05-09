@@ -154,6 +154,9 @@ interface PythonAnalysisResult {
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
 
+import { uint8ToBase64 } from "./encoding.ts";
+export { uint8ToBase64 };
+
 async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<PythonAnalysisResult | null> {
   const pythonUrl = Deno.env.get("PYTHON_ANALYSIS_URL");
   if (!pythonUrl) {
@@ -162,13 +165,7 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
   }
 
   try {
-    const CHUNK = 8192;
-    const len = Math.min(uint8.length, 10_000_000);
-    let binary = "";
-    for (let i = 0; i < len; i += CHUNK) {
-      binary += String.fromCharCode(...uint8.slice(i, Math.min(i + CHUNK, len)));
-    }
-    const base64 = btoa(binary);
+    const base64 = uint8ToBase64(uint8);
 
     const response = await fetch(`${pythonUrl}/analyze`, {
       method: "POST",
