@@ -740,7 +740,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
     let scoringMethod = "Default (no analysis engines available)";
 
     if (fileType === "image") {
-      const { engines, findings, exifExtras } = await runAllEngines(fileBytes, fileName, mimeType);
+      const { engines, findings, exifExtras } = await runAllEngines(fileBytes, fileName, mimeType, exifData);
       allFindings.push(...findings);
       Object.assign(exifData, exifExtras);
 
@@ -749,7 +749,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, AI Vision, Winston) were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither EXIF nor ELA analysis produced a score." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${fileType} analysis`, severity: "low", description: "Deep analysis is only available for images." });
