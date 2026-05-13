@@ -179,7 +179,9 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
       return null;
     }
 
-    const response = await fetch(`${pythonUrl}/analyze`, {
+    // Use the lightweight /ela endpoint (ELA only — robust, fast, never 500s
+    // on PNG/odd inputs because heavy engines like SIFT/FFT/Face are skipped).
+    const response = await fetch(`${pythonUrl}/ela`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ image_base64: base64, file_name: fileName }),
