@@ -338,19 +338,22 @@ function computeExifScore(exifData: Record<string, string>): { score: number; fi
     finding = "Authentic camera EXIF present";
     description = `Original camera metadata found (${[exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ") || "camera info"}). Consistent with a real photograph.`;
   } else if (exifPresent && software) {
-    score = 65;
-    severity = "medium";
-    finding = `EXIF present, edited by ${software}`;
-    description = `Metadata indicates the image was processed by "${software}".`;
+    // Software-edited isn't necessarily fake — most photos are processed
+    score = 70;
+    severity = "low";
+    finding = `EXIF present, processed by ${software}`;
+    description = `Metadata indicates the image was processed by "${software}". Common for legitimate edits (color, crop, export).`;
   } else if (exifPresent) {
     score = 80;
     finding = "EXIF metadata present";
     description = "Image carries EXIF metadata, suggesting an unmanipulated source.";
   } else {
-    score = 45;
-    severity = "medium";
-    finding = "EXIF metadata stripped";
-    description = "No EXIF metadata found. Could indicate re-export, screenshot, social-media upload, or manipulation.";
+    // Stripped EXIF is the norm for web/social images — DON'T treat as suspicious.
+    // Most screenshots, social uploads, and re-exports strip EXIF. Stay neutral.
+    score = 65;
+    severity = "low";
+    finding = "EXIF metadata absent";
+    description = "No EXIF metadata found — common for screenshots, social-media uploads, or re-exports. Not by itself a sign of manipulation.";
   }
 
   if (c2pa && !aiTool) {
