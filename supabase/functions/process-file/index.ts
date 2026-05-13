@@ -142,15 +142,6 @@ function extractPngMetadata(uint8: Uint8Array): Record<string, string> {
 
 interface PythonAnalysisResult {
   ela_score: number;
-  noise_score: number;
-  clone_score: number;
-  edge_score: number;
-  mantranet_score?: number;
-  fft_score?: number;
-  sift_clone_score?: number;
-  face_forensics_score?: number;
-  face_count?: number;
-  overall_score: number;
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
 
