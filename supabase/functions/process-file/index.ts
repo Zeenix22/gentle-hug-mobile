@@ -198,275 +198,8 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
   }
 }
 
-// ─── AI Vision Analysis (Lovable AI Gateway / Gemini) ───────────────────────
+// AI Vision and Winston engines removed — image analysis uses ELA + EXIF only.
 
-interface AIVisionResult {
-  aiScore: number; // 0-100 where 100 = definitely human/real, 0 = definitely AI
-  isAIGenerated: boolean;
-  confidence: number;
-  analysis: string;
-  findings: { category: string; finding: string; severity: "low" | "medium" | "high"; description: string }[];
-}
-
-async function analyzeWithAIVision(uint8: Uint8Array, mimeType: string): Promise<AIVisionResult | null> {
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) {
-    console.log("LOVABLE_API_KEY not set — skipping AI Vision analysis");
-    return null;
-  }
-
-  try {
-    const len = Math.min(uint8.length, 4_000_000);
-    const slice = uint8.length > len ? uint8.slice(0, len) : uint8;
-    let binaryStr = "";
-    const CHUNK = 8192;
-    for (let i = 0; i < slice.length; i += CHUNK) {
-      const end = Math.min(i + CHUNK, slice.length);
-      for (let j = i; j < end; j++) {
-        binaryStr += String.fromCharCode(slice[j]);
-      }
-    }
-    const base64 = btoa(binaryStr);
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: `You are a world-class AI image forensics expert. Your task is to classify an image into one of three categories and assign a precise human_score.
-
-## SCORING RULES (follow these EXACTLY):
-
-### Category 1: AI-Generated Image (score 0-10)
-Assign 0-10 if the image was created by AI (Midjourney, DALL-E, Stable Diffusion, Flux, Adobe Firefly, etc.).
-Key signs: unnaturally perfect skin/textures, melted or distorted backgrounds, impossible anatomy (extra fingers, fused limbs), text artifacts, hyper-smooth gradients, repetitive micro-patterns, no natural camera noise, inconsistent perspective, perfect but unnatural lighting, "too perfect" look.
-- 0-3: Obviously AI (clear artifacts, distortions)
-- 4-7: Likely AI (subtle but detectable signs)
-- 8-10: Possibly AI (very high quality but still detectable)
-
-### Category 2: Edited/Manipulated Image (score 40-65)
-Assign 40-65 if the image is a REAL photo that has been digitally edited/manipulated (Photoshop, face-swap, compositing, airbrushing, object removal, background replacement).
-Key signs: inconsistent lighting between elements, clone stamp artifacts, edge inconsistencies around modified regions, mismatched noise levels, unnatural color transitions at boundaries, splicing evidence.
-- 40-50: Heavily manipulated
-- 51-60: Moderately edited
-- 61-65: Lightly edited (filters, retouching)
-
-### Category 3: Authentic/Real Image (score 85-100)
-Assign 85-100 if the image is a genuine, unmanipulated photograph.
-Key signs: consistent natural noise/grain throughout, natural lens distortion, realistic depth of field, authentic motion blur, consistent lighting/shadows, natural skin texture with pores, EXIF-consistent characteristics.
-- 85-90: Authentic but lower quality or compressed
-- 91-95: Clearly authentic photograph
-- 96-100: Pristine authentic photo with strong evidence
-
-## IMPORTANT:
-- Be DECISIVE. Do not hedge with scores in the 20-39 or 66-84 ranges unless you genuinely cannot tell.
-- Most AI images are detectable — look carefully at fine details, backgrounds, hands, text, reflections.
-- Most real photos have natural imperfections — noise, slight blur, lens artifacts.
-- Screenshots, memes, or digital art should be scored based on whether AI generated the content.
-
-Respond with ONLY valid JSON:
-{
-  "human_score": <number 0-100>,
-  "category": "<ai_generated|edited|authentic>",
-  "confidence": <number 0.0-1.0>,
-  "reasoning": "<2-3 sentence explanation of specific evidence found>",
-  "indicators": ["<specific evidence 1>", "<specific evidence 2>", "..."]
-}`
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Classify this image. Examine fine details: hands, text, backgrounds, textures, noise patterns, lighting consistency. Be decisive." },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${mimeType || "image/jpeg"};base64,${base64}`,
-                },
-              },
-            ],
-          },
-        ],
-        temperature: 0.05,
-        max_tokens: 800,
-      }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("AI Vision API error:", response.status, errText.substring(0, 500));
-      return null;
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "";
-    console.log("AI Vision raw response:", content.substring(0, 500));
-
-    let parsed: any;
-    try {
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)```/) || content.match(/\{[\s\S]*\}/);
-      const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : content;
-      parsed = JSON.parse(jsonStr.trim());
-    } catch {
-      console.error("Failed to parse AI Vision JSON:", content.substring(0, 300));
-      return null;
-    }
-
-    let humanScore = Math.max(0, Math.min(100, Math.round(parsed.human_score ?? 50)));
-    const category = parsed.category || "uncertain";
-    const confidence = Math.max(0, Math.min(1, parsed.confidence ?? 0.5));
-
-    // Enforce scoring bands based on category to prevent wishy-washy scores
-    if (category === "ai_generated" && humanScore > 15) humanScore = Math.min(humanScore, 10);
-    if (category === "authentic" && humanScore < 80) humanScore = Math.max(humanScore, 85);
-    if (category === "edited" && (humanScore < 35 || humanScore > 70)) {
-      humanScore = Math.max(40, Math.min(65, humanScore));
-    }
-
-    const isAI = category === "ai_generated";
-    const findings: AIVisionResult["findings"] = [];
-
-    const severity: "low" | "medium" | "high" = isAI ? "high" : category === "edited" ? "medium" : "low";
-
-    findings.push({
-      category: "AI Vision Analysis",
-      finding: isAI
-        ? `AI-generated image detected (confidence: ${Math.round(confidence * 100)}%)`
-        : category === "edited"
-        ? `Edited/manipulated image detected (confidence: ${Math.round(confidence * 100)}%)`
-        : `Authentic image (confidence: ${Math.round(confidence * 100)}%)`,
-      severity,
-      description: parsed.reasoning || "AI vision model analysis completed.",
-    });
-
-    if (parsed.indicators && Array.isArray(parsed.indicators)) {
-      for (const indicator of parsed.indicators.slice(0, 5)) {
-        findings.push({
-          category: "AI Vision: Indicator",
-          finding: String(indicator),
-          severity: isAI ? "high" : category === "edited" ? "medium" : "low",
-          description: `Detected during visual forensic analysis.`,
-        });
-      }
-    }
-
-    return { aiScore: humanScore, isAIGenerated: isAI, confidence, analysis: parsed.reasoning || "", findings };
-  } catch (err) {
-    console.error("AI Vision analysis error:", err);
-    return null;
-  }
-}
-
-// ─── Winston AI Detection ───────────────────────────────────────────────────
-
-interface WinstonDetectionResult {
-  winstonScore: number;
-  isAIGenerated: boolean;
-  confidence: number;
-  findings: { category: string; finding: string; severity: "low" | "medium" | "high"; description: string }[];
-}
-
-async function analyzeWithWinston(uint8: Uint8Array, mimeType: string): Promise<WinstonDetectionResult | null> {
-  const winstonApiKey = Deno.env.get("WINSTON_API_KEY");
-  if (!winstonApiKey) {
-    console.log("WINSTON_API_KEY not set — skipping Winston AI analysis");
-    return null;
-  }
-
-  try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const adminClient = createClient(supabaseUrl, serviceKey);
-
-    const tempPath = `_winston_temp/${crypto.randomUUID()}.jpg`;
-    const blob = new Blob([uint8], { type: mimeType || "image/jpeg" });
-
-    const { error: uploadErr } = await adminClient.storage
-      .from("uploads")
-      .upload(tempPath, blob, { contentType: mimeType || "image/jpeg", upsert: true });
-
-    if (uploadErr) {
-      console.error("Winston temp upload failed:", uploadErr.message);
-      return null;
-    }
-
-    const { data: signedData, error: signErr } = await adminClient.storage
-      .from("uploads")
-      .createSignedUrl(tempPath, 300);
-
-    if (signErr || !signedData?.signedUrl) {
-      console.error("Winston signed URL failed:", signErr?.message);
-      await adminClient.storage.from("uploads").remove([tempPath]);
-      return null;
-    }
-
-    console.log("Winston: calling API with signed URL");
-
-    const response = await fetch("https://api.gowinston.ai/v2/image-detection", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${winstonApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ url: signedData.signedUrl }),
-    });
-
-    await adminClient.storage.from("uploads").remove([tempPath]).catch(() => {});
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.error("Winston AI API error:", response.status, errText.substring(0, 500));
-      return null;
-    }
-
-    const data = await response.json();
-    console.log("Winston raw response:", JSON.stringify(data).substring(0, 500));
-    return parseWinstonResponse(data);
-  } catch (err) {
-    console.error("Winston AI analysis error:", err);
-    return null;
-  }
-}
-
-function parseWinstonResponse(data: any): WinstonDetectionResult {
-  const findings: WinstonDetectionResult["findings"] = [];
-
-  try {
-    const score = data?.score ?? null;
-    const humanProb = data?.human_probability;
-
-    if (score === null && humanProb === undefined) {
-      console.warn("Winston response missing score:", JSON.stringify(data).substring(0, 500));
-      return { winstonScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
-    }
-
-    const winstonScore = Math.round(score ?? (humanProb * 100));
-    const isAIGenerated = winstonScore < 50;
-
-    const severity: "low" | "medium" | "high" = isAIGenerated
-      ? (winstonScore < 20 ? "high" : winstonScore < 40 ? "medium" : "low")
-      : (winstonScore > 80 ? "low" : "medium");
-
-    findings.push({
-      category: "AI Detection (Winston AI)",
-      finding: isAIGenerated
-        ? `Likely AI-generated (human score: ${winstonScore}%)`
-        : `Likely human-created (human score: ${winstonScore}%)`,
-      severity,
-      description: `Winston AI assigns a human probability of ${winstonScore}%. ${isAIGenerated ? "This suggests the image may be AI-generated." : "This suggests the image is likely authentic."}`,
-    });
-
-    return { winstonScore, isAIGenerated, confidence: Math.abs(winstonScore - 50) / 50, findings };
-  } catch (err) {
-    console.error("Error parsing Winston response:", err);
-    return { winstonScore: 50, isAIGenerated: false, confidence: 0, findings: [] };
-  }
-}
 
 // ─── Multi-Engine Score Blending ────────────────────────────────────────────
 
@@ -590,10 +323,59 @@ function extractMetadata(
 
 type Finding = { category: string; finding: string; severity: "low" | "medium" | "high"; description: string };
 
+function computeExifScore(exifData: Record<string, string>): { score: number; finding: Finding } {
+  const aiTool = exifData["AI Tool Detected"];
+  const c2pa = exifData["C2PA Provenance"] === "Present";
+  const exifPresent = exifData["EXIF Data"] === "Present";
+  const hasCamera = !!(exifData["Camera Make"] || exifData["Camera Model"] || exifData["Camera"]);
+  const software = exifData["Software"];
+
+  let score = 70;
+  let severity: "low" | "medium" | "high" = "low";
+  let finding = "EXIF metadata analyzed";
+  let description = "Metadata signals evaluated for authenticity.";
+
+  if (aiTool) {
+    score = 5;
+    severity = "high";
+    finding = `AI tool signature in metadata: ${aiTool}`;
+    description = `Metadata references "${aiTool}", a known AI generation/restoration tool. Strong evidence of synthetic origin.`;
+  } else if (hasCamera && exifPresent) {
+    score = 92;
+    finding = "Authentic camera EXIF present";
+    description = `Original camera metadata found (${[exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ") || "camera info"}). Consistent with a real photograph.`;
+  } else if (exifPresent && software) {
+    score = 65;
+    severity = "medium";
+    finding = `EXIF present, edited by ${software}`;
+    description = `Metadata indicates the image was processed by "${software}".`;
+  } else if (exifPresent) {
+    score = 80;
+    finding = "EXIF metadata present";
+    description = "Image carries EXIF metadata, suggesting an unmanipulated source.";
+  } else {
+    score = 45;
+    severity = "medium";
+    finding = "EXIF metadata stripped";
+    description = "No EXIF metadata found. Could indicate re-export, screenshot, social-media upload, or manipulation.";
+  }
+
+  if (c2pa && !aiTool) {
+    score = Math.min(100, score + 5);
+    description += " C2PA Content Credentials present.";
+  }
+
+  return {
+    score,
+    finding: { category: "EXIF Metadata", finding, severity, description },
+  };
+}
+
 async function runAllEngines(
   uint8: Uint8Array,
   fileName: string,
-  mimeType: string,
+  _mimeType: string,
+  exifData: Record<string, string>,
 ): Promise<{
   engines: EngineScore[];
   findings: Finding[];
@@ -603,50 +385,37 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Only Python forensics: ELA + FFT + SIFT + Face Forensics
-  const pythonResult = await callPythonELA(uint8, fileName);
+  // Engine 1: EXIF Metadata (weight: 40)
+  const exifEval = computeExifScore(exifData);
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 40 });
+  findings.push(exifEval.finding);
+  exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
+  // Engine 2: ELA via Python microservice (weight: 60)
+  const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    // ELA (weight: 20)
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 20 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 60 });
     for (const f of pythonResult.findings) {
-      // Skip ManTra-Net findings — engine is disabled in scoring
-      if (f.category === "ManTra-Net") continue;
-      const cat = f.category.startsWith("FFT") || f.category.startsWith("SIFT") || f.category.startsWith("Face")
-        ? f.category
-        : `ELA: ${f.category}`;
-      findings.push({ category: cat, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
+      if (!f.category.toLowerCase().includes("ela")) continue;
+      findings.push({
+        category: `ELA: ${f.category}`,
+        finding: f.finding,
+        severity: f.severity as "low" | "medium" | "high",
+        description: f.description,
+      });
     }
     exifExtras["ELA Score"] = `${pythonResult.ela_score}/100`;
-    exifExtras["Noise Consistency"] = `${pythonResult.noise_score}/100`;
-    exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
-
-    // FFT Frequency Analysis (weight: 30) — catches AI upscaling / face restoration
-    if (typeof pythonResult.fft_score === "number") {
-      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 30 });
-      exifExtras["FFT Score"] = `${pythonResult.fft_score}/100`;
-    }
-
-    // SIFT Copy-Move (weight: 20) — catches local paint/clone edits
-    if (typeof pythonResult.sift_clone_score === "number") {
-      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 20 });
-      exifExtras["SIFT Copy-Move Score"] = `${pythonResult.sift_clone_score}/100`;
-    }
-
-    // Face Forensics (weight: 30) — catches deepfakes & face restoration
-    if (typeof pythonResult.face_forensics_score === "number") {
-      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 30 });
-      exifExtras["Face Forensics Score"] = `${pythonResult.face_forensics_score}/100`;
-      if (typeof pythonResult.face_count === "number") {
-        exifExtras["Faces Detected"] = String(pythonResult.face_count);
-      }
-    }
+  } else {
+    findings.push({
+      category: "ELA",
+      finding: "ELA engine unavailable",
+      severity: "medium",
+      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only.",
+    });
   }
 
-  const engineNames = engines.map(e => e.name).join(", ");
-  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/4)`);
-
+  console.log(`Engines completed: ${engines.map(e => e.name).join(", ")} (${engines.length}/2)`);
   return { engines, findings, exifExtras };
 }
 
@@ -704,7 +473,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
     let scoringMethod = "Default (no analysis engines available)";
 
     if (fileType === "image") {
-      const { engines, findings, exifExtras } = await runAllEngines(fileBytes, fileName, mimeType);
+      const { engines, findings, exifExtras } = await runAllEngines(fileBytes, fileName, mimeType, exifData);
       allFindings.push(...findings);
       Object.assign(exifData, exifExtras);
 
@@ -713,7 +482,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines (ELA, AI Vision, Winston) were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither EXIF nor ELA analysis produced a score." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${fileType} analysis`, severity: "low", description: "Deep analysis is only available for images." });
@@ -855,7 +624,7 @@ Deno.serve(async (req) => {
     let scoringMethod = "Default (no analysis engines available)";
 
     if (analysis.file_type === "image") {
-      const { engines, findings, exifExtras } = await runAllEngines(uint8, analysis.file_name, fileData.type);
+      const { engines, findings, exifExtras } = await runAllEngines(uint8, analysis.file_name, fileData.type, exifData);
       allFindings.push(...findings);
       Object.assign(exifData, exifExtras);
 
@@ -864,7 +633,7 @@ Deno.serve(async (req) => {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither EXIF nor ELA analysis produced a score." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${analysis.file_type} analysis`, severity: "low", description: "Deep analysis is only available for images." });
