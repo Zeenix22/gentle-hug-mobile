@@ -605,18 +605,56 @@ def run_face_forensics(img: np.ndarray) -> tuple[int, int, List[Finding]]:
 
 # ── Main Endpoint ────────────────────────────────────────────────────────────
 
+def _safe(fn, default):
+    """Run an engine and never let it crash the request."""
+    try:
+        return fn()
+    except Exception as e:
+        print(f"[engine-error] {fn.__name__ if hasattr(fn,'__name__') else 'engine'}: {e}")
+        return default
+
+
+class ElaOnlyResponse(BaseModel):
+    ela_score: int
+    findings: List[Finding]
+
+
+@app.post("/ela", response_model=ElaOnlyResponse)
+async def ela_only(req: AnalyzeRequest):
+    """Lightweight, robust endpoint: runs ONLY ELA. Used by Truth Buddy."""
+    img = decode_image(req.image_base64)
+    _, ela_score = run_ela(img)
+
+    if ela_score >= 75:
+        sev, desc = "low", "ELA shows uniform compression — consistent with an unmodified image."
+    elif ela_score >= 40:
+        sev, desc = "medium", "ELA shows some compression inconsistencies that may indicate editing."
+    else:
+        sev, desc = "high", "ELA reveals significant compression artifacts suggesting manipulation."
+
+    return ElaOnlyResponse(
+        ela_score=ela_score,
+        findings=[Finding(
+            category="Error Level Analysis",
+            finding=f"ELA score: {ela_score}/100",
+            severity=sev,
+            description=desc,
+        )],
+    )
+
+
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest):
     img = decode_image(req.image_base64)
 
-    _, ela_score = run_ela(img)
-    noise_score, noise_findings = run_noise_analysis(img)
-    clone_score, clone_findings = run_clone_detection(img)
-    edge_score, edge_findings = run_edge_analysis(img)
-    mantranet_score, mantranet_findings = run_mantranet(img)
-    fft_score, fft_findings = run_fft_analysis(img)
-    sift_score, sift_findings = run_sift_copy_move(img)
-    face_score, face_count, face_findings = run_face_forensics(img)
+    _, ela_score = _safe(lambda: run_ela(img), (None, 50))
+    noise_score, noise_findings = _safe(lambda: run_noise_analysis(img), (50, []))
+    clone_score, clone_findings = _safe(lambda: run_clone_detection(img), (80, []))
+    edge_score, edge_findings = _safe(lambda: run_edge_analysis(img), (80, []))
+    mantranet_score, mantranet_findings = _safe(lambda: run_mantranet(img), (75, []))
+    fft_score, fft_findings = _safe(lambda: run_fft_analysis(img), (75, []))
+    sift_score, sift_findings = _safe(lambda: run_sift_copy_move(img), (80, []))
+    face_score, face_count, face_findings = _safe(lambda: run_face_forensics(img), (75, 0, []))
 
     # Weighted blend within Python service:
     # ManTra-Net 30%, FFT 18%, Face 15%, SIFT 12%, ELA 13%, Noise 8%, Clone 2%, Edge 2%

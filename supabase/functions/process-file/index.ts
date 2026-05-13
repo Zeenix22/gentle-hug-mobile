@@ -142,15 +142,6 @@ function extractPngMetadata(uint8: Uint8Array): Record<string, string> {
 
 interface PythonAnalysisResult {
   ela_score: number;
-  noise_score: number;
-  clone_score: number;
-  edge_score: number;
-  mantranet_score?: number;
-  fft_score?: number;
-  sift_clone_score?: number;
-  face_forensics_score?: number;
-  face_count?: number;
-  overall_score: number;
   findings: { category: string; finding: string; severity: string; description: string }[];
 }
 
@@ -179,7 +170,9 @@ async function callPythonELA(uint8: Uint8Array, fileName: string): Promise<Pytho
       return null;
     }
 
-    const response = await fetch(`${pythonUrl}/analyze`, {
+    // Use the lightweight /ela endpoint (ELA only — robust, fast, never 500s
+    // on PNG/odd inputs because heavy engines like SIFT/FFT/Face are skipped).
+    const response = await fetch(`${pythonUrl}/ela`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ image_base64: base64, file_name: fileName }),
@@ -264,7 +257,7 @@ function extractMetadata(
           findings.push({ category: "Metadata", finding: `Software: ${exifData["Software"]}`, severity: "low", description: `Image was processed by "${exifData["Software"]}".` });
         }
       } else {
-        findings.push({ category: "Metadata", finding: "EXIF data stripped", severity: "medium", description: "No camera metadata found." });
+        findings.push({ category: "Metadata", finding: "EXIF data absent", severity: "low", description: "No camera metadata found — common for screenshots and re-exported images." });
       }
     } else if (uint8[0] === 0x89 && uint8[1] === 0x50) {
       exifData = extractPngMetadata(uint8);
@@ -345,19 +338,22 @@ function computeExifScore(exifData: Record<string, string>): { score: number; fi
     finding = "Authentic camera EXIF present";
     description = `Original camera metadata found (${[exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ") || "camera info"}). Consistent with a real photograph.`;
   } else if (exifPresent && software) {
-    score = 65;
-    severity = "medium";
-    finding = `EXIF present, edited by ${software}`;
-    description = `Metadata indicates the image was processed by "${software}".`;
+    // Software-edited isn't necessarily fake — most photos are processed
+    score = 70;
+    severity = "low";
+    finding = `EXIF present, processed by ${software}`;
+    description = `Metadata indicates the image was processed by "${software}". Common for legitimate edits (color, crop, export).`;
   } else if (exifPresent) {
     score = 80;
     finding = "EXIF metadata present";
     description = "Image carries EXIF metadata, suggesting an unmanipulated source.";
   } else {
-    score = 45;
-    severity = "medium";
-    finding = "EXIF metadata stripped";
-    description = "No EXIF metadata found. Could indicate re-export, screenshot, social-media upload, or manipulation.";
+    // Stripped EXIF is the norm for web/social images — DON'T treat as suspicious.
+    // Most screenshots, social uploads, and re-exports strip EXIF. Stay neutral.
+    score = 65;
+    severity = "low";
+    finding = "EXIF metadata absent";
+    description = "No EXIF metadata found — common for screenshots, social-media uploads, or re-exports. Not by itself a sign of manipulation.";
   }
 
   if (c2pa && !aiTool) {
@@ -385,16 +381,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Engine 1: EXIF Metadata (weight: 40)
+  // Engine 1: EXIF Metadata (weight: 20 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
-  engines.push({ name: "EXIF", score: exifEval.score, weight: 40 });
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 20 });
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
-  // Engine 2: ELA via Python microservice (weight: 60)
+  // Engine 2: ELA via Python microservice (weight: 80 — primary forensic signal)
   const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 60 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 80 });
     for (const f of pythonResult.findings) {
       if (!f.category.toLowerCase().includes("ela")) continue;
       findings.push({
@@ -410,8 +406,8 @@ async function runAllEngines(
     findings.push({
       category: "ELA",
       finding: "ELA engine unavailable",
-      severity: "medium",
-      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only.",
+      severity: "low",
+      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only. This is a service issue, not evidence of manipulation.",
     });
   }
 
