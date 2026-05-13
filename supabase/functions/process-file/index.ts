@@ -406,8 +406,8 @@ async function runAllEngines(
     findings.push({
       category: "ELA",
       finding: "ELA engine unavailable",
-      severity: "medium",
-      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only.",
+      severity: "low",
+      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only. This is a service issue, not evidence of manipulation.",
     });
   }
 
