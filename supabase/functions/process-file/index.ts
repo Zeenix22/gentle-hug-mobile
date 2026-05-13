@@ -257,7 +257,7 @@ function extractMetadata(
           findings.push({ category: "Metadata", finding: `Software: ${exifData["Software"]}`, severity: "low", description: `Image was processed by "${exifData["Software"]}".` });
         }
       } else {
-        findings.push({ category: "Metadata", finding: "EXIF data stripped", severity: "medium", description: "No camera metadata found." });
+        findings.push({ category: "Metadata", finding: "EXIF data absent", severity: "low", description: "No camera metadata found — common for screenshots and re-exported images." });
       }
     } else if (uint8[0] === 0x89 && uint8[1] === 0x50) {
       exifData = extractPngMetadata(uint8);
