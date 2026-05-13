@@ -590,10 +590,59 @@ function extractMetadata(
 
 type Finding = { category: string; finding: string; severity: "low" | "medium" | "high"; description: string };
 
+function computeExifScore(exifData: Record<string, string>): { score: number; finding: Finding } {
+  const aiTool = exifData["AI Tool Detected"];
+  const c2pa = exifData["C2PA Provenance"] === "Present";
+  const exifPresent = exifData["EXIF Data"] === "Present";
+  const hasCamera = !!(exifData["Camera Make"] || exifData["Camera Model"] || exifData["Camera"]);
+  const software = exifData["Software"];
+
+  let score = 70;
+  let severity: "low" | "medium" | "high" = "low";
+  let finding = "EXIF metadata analyzed";
+  let description = "Metadata signals evaluated for authenticity.";
+
+  if (aiTool) {
+    score = 5;
+    severity = "high";
+    finding = `AI tool signature in metadata: ${aiTool}`;
+    description = `Metadata references "${aiTool}", a known AI generation/restoration tool. Strong evidence of synthetic origin.`;
+  } else if (hasCamera && exifPresent) {
+    score = 92;
+    finding = "Authentic camera EXIF present";
+    description = `Original camera metadata found (${[exifData["Camera Make"], exifData["Camera Model"]].filter(Boolean).join(" ") || "camera info"}). Consistent with a real photograph.`;
+  } else if (exifPresent && software) {
+    score = 65;
+    severity = "medium";
+    finding = `EXIF present, edited by ${software}`;
+    description = `Metadata indicates the image was processed by "${software}".`;
+  } else if (exifPresent) {
+    score = 80;
+    finding = "EXIF metadata present";
+    description = "Image carries EXIF metadata, suggesting an unmanipulated source.";
+  } else {
+    score = 45;
+    severity = "medium";
+    finding = "EXIF metadata stripped";
+    description = "No EXIF metadata found. Could indicate re-export, screenshot, social-media upload, or manipulation.";
+  }
+
+  if (c2pa && !aiTool) {
+    score = Math.min(100, score + 5);
+    description += " C2PA Content Credentials present.";
+  }
+
+  return {
+    score,
+    finding: { category: "EXIF Metadata", finding, severity, description },
+  };
+}
+
 async function runAllEngines(
   uint8: Uint8Array,
   fileName: string,
-  mimeType: string,
+  _mimeType: string,
+  exifData: Record<string, string>,
 ): Promise<{
   engines: EngineScore[];
   findings: Finding[];
@@ -603,50 +652,37 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Only Python forensics: ELA + FFT + SIFT + Face Forensics
-  const pythonResult = await callPythonELA(uint8, fileName);
+  // Engine 1: EXIF Metadata (weight: 40)
+  const exifEval = computeExifScore(exifData);
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 40 });
+  findings.push(exifEval.finding);
+  exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
+  // Engine 2: ELA via Python microservice (weight: 60)
+  const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    // ELA (weight: 20)
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 20 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 60 });
     for (const f of pythonResult.findings) {
-      // Skip ManTra-Net findings — engine is disabled in scoring
-      if (f.category === "ManTra-Net") continue;
-      const cat = f.category.startsWith("FFT") || f.category.startsWith("SIFT") || f.category.startsWith("Face")
-        ? f.category
-        : `ELA: ${f.category}`;
-      findings.push({ category: cat, finding: f.finding, severity: f.severity as "low" | "medium" | "high", description: f.description });
+      if (!f.category.toLowerCase().includes("ela")) continue;
+      findings.push({
+        category: `ELA: ${f.category}`,
+        finding: f.finding,
+        severity: f.severity as "low" | "medium" | "high",
+        description: f.description,
+      });
     }
     exifExtras["ELA Score"] = `${pythonResult.ela_score}/100`;
-    exifExtras["Noise Consistency"] = `${pythonResult.noise_score}/100`;
-    exifExtras["Clone Detection"] = `${pythonResult.clone_score}/100`;
     exifExtras["ELA Analysis"] = "Completed";
-
-    // FFT Frequency Analysis (weight: 30) — catches AI upscaling / face restoration
-    if (typeof pythonResult.fft_score === "number") {
-      engines.push({ name: "FFT Frequency", score: pythonResult.fft_score, weight: 30 });
-      exifExtras["FFT Score"] = `${pythonResult.fft_score}/100`;
-    }
-
-    // SIFT Copy-Move (weight: 20) — catches local paint/clone edits
-    if (typeof pythonResult.sift_clone_score === "number") {
-      engines.push({ name: "SIFT Copy-Move", score: pythonResult.sift_clone_score, weight: 20 });
-      exifExtras["SIFT Copy-Move Score"] = `${pythonResult.sift_clone_score}/100`;
-    }
-
-    // Face Forensics (weight: 30) — catches deepfakes & face restoration
-    if (typeof pythonResult.face_forensics_score === "number") {
-      engines.push({ name: "Face Forensics", score: pythonResult.face_forensics_score, weight: 30 });
-      exifExtras["Face Forensics Score"] = `${pythonResult.face_forensics_score}/100`;
-      if (typeof pythonResult.face_count === "number") {
-        exifExtras["Faces Detected"] = String(pythonResult.face_count);
-      }
-    }
+  } else {
+    findings.push({
+      category: "ELA",
+      finding: "ELA engine unavailable",
+      severity: "medium",
+      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only.",
+    });
   }
 
-  const engineNames = engines.map(e => e.name).join(", ");
-  console.log(`Engines completed: ${engineNames || "none"} (${engines.length}/4)`);
-
+  console.log(`Engines completed: ${engines.map(e => e.name).join(", ")} (${engines.length}/2)`);
   return { engines, findings, exifExtras };
 }
 
