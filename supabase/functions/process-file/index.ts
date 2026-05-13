@@ -891,7 +891,7 @@ Deno.serve(async (req) => {
     let scoringMethod = "Default (no analysis engines available)";
 
     if (analysis.file_type === "image") {
-      const { engines, findings, exifExtras } = await runAllEngines(uint8, analysis.file_name, fileData.type);
+      const { engines, findings, exifExtras } = await runAllEngines(uint8, analysis.file_name, fileData.type, exifData);
       allFindings.push(...findings);
       Object.assign(exifData, exifExtras);
 
@@ -900,7 +900,7 @@ Deno.serve(async (req) => {
       scoringMethod = blended.method;
 
       if (engines.length === 0) {
-        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "None of the detection engines were available." });
+        allFindings.push({ category: "Analysis Status", finding: "No analysis engines available", severity: "high", description: "Neither EXIF nor ELA analysis produced a score." });
       }
     } else {
       allFindings.push({ category: "File Type", finding: `${analysis.file_type} analysis`, severity: "low", description: "Deep analysis is only available for images." });
