@@ -182,24 +182,16 @@ const Analysis = () => {
           return v ? parseInt(v.replace("/100", "")) : null;
         };
         const elaScore = parseScore("ELA Score");
-        const hfScore = parseScore("AI Vision Score") ?? parseScore("HF Score");
-        const winstonScore = parseScore("Winston Score");
-        const mantranetScore = parseScore("ManTra-Net Score");
-        const fftScore = parseScore("FFT Score");
-        const siftScore = parseScore("SIFT Copy-Move Score");
-        const faceScore = parseScore("Face Forensics Score");
+        const exifScore = parseScore("EXIF Score");
         const c2pa = result.exifData?.["C2PA Provenance"];
         const aiTool = result.exifData?.["AI Tool Detected"];
-        const faceCount = result.exifData?.["Faces Detected"];
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
 
         const engines = [
-          { label: "FFT Frequency Analysis", icon: Activity, score: fftScore, desc: "Radial frequency spectrum analysis — detects AI upscaling, GFPGAN/Real-ESRGAN face restoration, and diffusion artifacts", offDesc: "Requires the Python microservice." },
-          { label: "Face Forensics (Deepfake)", icon: ScanFace, score: faceScore, desc: `Per-face frequency + texture analysis to detect deepfakes and AI face restoration${faceCount ? ` (${faceCount} face${faceCount === "1" ? "" : "s"} detected)` : ""}`, offDesc: "Requires the Python microservice." },
-          { label: "SIFT Copy-Move Detection", icon: Copy, score: siftScore, desc: "Geometric SIFT keypoint matching to detect cloned/painted/stamped regions within the image", offDesc: "Requires the Python microservice." },
-          { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, desc: "Pixel-level recompression error analysis", offDesc: "ELA requires the Python microservice." },
+          { label: "EXIF Metadata", icon: BadgeCheck, score: exifScore, desc: "Inspects camera metadata, software signatures, AI-tool markers, and C2PA provenance", offDesc: "EXIF analysis unavailable." },
+          { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, desc: "Pixel-level recompression error analysis to detect localized edits", offDesc: "ELA requires the Python microservice." },
         ].map(e => ({ ...e, has: e.score != null }));
 
         const hasAny = engines.some(e => e.has);
