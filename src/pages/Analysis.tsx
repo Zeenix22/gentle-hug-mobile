@@ -239,10 +239,10 @@ const Analysis = () => {
                 );
               })}
 
-              {(c2pa || aiTool) && (
+              {(c2pa || aiTool || deepfakeProb || aiGenProb) && (
                 <div className="pt-2 border-t border-border space-y-1.5">
                   <span className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <BadgeCheck className="h-3 w-3" /> Provenance Signals
+                    <BadgeCheck className="h-3 w-3" /> Provenance & AI Signals
                   </span>
                   {c2pa && (
                     <div className="flex items-center justify-between text-[11px]">
@@ -254,6 +254,18 @@ const Analysis = () => {
                     <div className="flex items-center justify-between text-[11px]">
                       <span className="text-muted-foreground">AI Tool Detected</span>
                       <span className="font-semibold text-destructive">{aiTool}</span>
+                    </div>
+                  )}
+                  {deepfakeProb && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">Deepfake Probability</span>
+                      <span className="font-semibold text-foreground">{deepfakeProb}</span>
+                    </div>
+                  )}
+                  {aiGenProb && (
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-muted-foreground">AI-Generated Probability</span>
+                      <span className="font-semibold text-foreground">{aiGenProb}</span>
                     </div>
                   )}
                 </div>
