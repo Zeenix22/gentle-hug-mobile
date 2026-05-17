@@ -479,10 +479,10 @@ async function runAllEngines(
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
-  // Engine 2: ELA via Python microservice (weight: 20 — pixel-level edits)
+  // Engine 2: ELA via Python microservice (weight: 10 — pixel-level edits)
   const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 20 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 10 });
     for (const f of pythonResult.findings) {
       if (!f.category.toLowerCase().includes("ela")) continue;
       findings.push({
