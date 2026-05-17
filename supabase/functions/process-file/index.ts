@@ -473,16 +473,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Engine 1: EXIF Metadata (weight: 20 — soft signal, easily stripped)
+  // Engine 1: EXIF Metadata (weight: 15 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
-  engines.push({ name: "EXIF", score: exifEval.score, weight: 20 });
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 15 });
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
-  // Engine 2: ELA via Python microservice (weight: 80 — primary forensic signal)
+  // Engine 2: ELA via Python microservice (weight: 40 — pixel-level edits)
   const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 80 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 40 });
     for (const f of pythonResult.findings) {
       if (!f.category.toLowerCase().includes("ela")) continue;
       findings.push({
@@ -499,11 +499,28 @@ async function runAllEngines(
       category: "ELA",
       finding: "ELA engine unavailable",
       severity: "low",
-      description: "The Python ELA microservice did not respond; final score is based on EXIF metadata only. This is a service issue, not evidence of manipulation.",
+      description: "The Python ELA microservice did not respond; score blended from available engines only.",
     });
   }
 
-  console.log(`Engines completed: ${engines.map(e => e.name).join(", ")} (${engines.length}/2)`);
+  // Engine 3: Sightengine (weight: 45 — deepfake + AI-generation, strongest signal)
+  const sightResult = await callSightengine(uint8, fileName, _mimeType);
+  if (sightResult) {
+    engines.push({ name: "AI/Deepfake", score: sightResult.score, weight: 45 });
+    findings.push(...sightResult.findings);
+    exifExtras["AI/Deepfake Score"] = `${sightResult.score}/100`;
+    exifExtras["Deepfake Probability"] = `${(sightResult.deepfakeProb * 100).toFixed(1)}%`;
+    exifExtras["AI-Generated Probability"] = `${(sightResult.aiGenProb * 100).toFixed(1)}%`;
+  } else {
+    findings.push({
+      category: "AI/Deepfake Detection",
+      finding: "Sightengine unavailable",
+      severity: "low",
+      description: "Sightengine API did not respond or is not configured; score blended from remaining engines.",
+    });
+  }
+
+  console.log(`Engines completed: ${engines.map(e => e.name).join(", ")} (${engines.length}/3)`);
   return { engines, findings, exifExtras };
 }
 
