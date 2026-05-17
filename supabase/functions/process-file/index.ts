@@ -475,7 +475,7 @@ async function runAllEngines(
 
   // Engine 1: EXIF Metadata (weight: 30 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
-  engines.push({ name: "EXIF", score: exifEval.score, weight: 20 });
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 30 });
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
