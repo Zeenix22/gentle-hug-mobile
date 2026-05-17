@@ -601,7 +601,7 @@ async function handleDirectAnalysis(req: Request): Promise<Response> {
     if (finalScore >= 85) {
       authenticityLevel = "authentic";
       summary = `This image is classified as human-created with a confidence score of ${finalScore}%. No significant signs of AI generation or manipulation were detected.`;
-    } else if (finalScore >= 35) {
+    } else if (finalScore >= 50) {
       authenticityLevel = "suspicious";
       summary = `This image shows signs of digital editing or manipulation. Confidence score: ${finalScore}%. Some elements appear altered while others remain authentic.`;
     } else {
