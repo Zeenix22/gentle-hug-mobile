@@ -473,16 +473,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Engine 1: EXIF Metadata (weight: 15 — soft signal, easily stripped)
+  // Engine 1: EXIF Metadata (weight: 20 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
-  engines.push({ name: "EXIF", score: exifEval.score, weight: 15 });
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 20 });
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
-  // Engine 2: ELA via Python microservice (weight: 40 — pixel-level edits)
+  // Engine 2: ELA via Python microservice (weight: 20 — pixel-level edits)
   const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 40 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 20 });
     for (const f of pythonResult.findings) {
       if (!f.category.toLowerCase().includes("ela")) continue;
       findings.push({
@@ -503,10 +503,10 @@ async function runAllEngines(
     });
   }
 
-  // Engine 3: Sightengine (weight: 45 — deepfake + AI-generation, strongest signal)
+  // Engine 3: Sightengine (weight: 60 — deepfake + AI-generation, strongest signal)
   const sightResult = await callSightengine(uint8, fileName, _mimeType);
   if (sightResult) {
-    engines.push({ name: "AI/Deepfake", score: sightResult.score, weight: 45 });
+    engines.push({ name: "AI/Deepfake", score: sightResult.score, weight: 60 });
     findings.push(...sightResult.findings);
     exifExtras["AI/Deepfake Score"] = `${sightResult.score}/100`;
     exifExtras["Deepfake Probability"] = `${(sightResult.deepfakeProb * 100).toFixed(1)}%`;
