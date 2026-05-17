@@ -473,7 +473,7 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Engine 1: EXIF Metadata (weight: 20 — soft signal, easily stripped)
+  // Engine 1: EXIF Metadata (weight: 30 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
   engines.push({ name: "EXIF", score: exifEval.score, weight: 20 });
   findings.push(exifEval.finding);
