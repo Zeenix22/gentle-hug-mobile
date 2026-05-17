@@ -503,10 +503,10 @@ async function runAllEngines(
     });
   }
 
-  // Engine 3: Sightengine (weight: 45 — deepfake + AI-generation, strongest signal)
+  // Engine 3: Sightengine (weight: 60 — deepfake + AI-generation, strongest signal)
   const sightResult = await callSightengine(uint8, fileName, _mimeType);
   if (sightResult) {
-    engines.push({ name: "AI/Deepfake", score: sightResult.score, weight: 45 });
+    engines.push({ name: "AI/Deepfake", score: sightResult.score, weight: 60 });
     findings.push(...sightResult.findings);
     exifExtras["AI/Deepfake Score"] = `${sightResult.score}/100`;
     exifExtras["Deepfake Probability"] = `${(sightResult.deepfakeProb * 100).toFixed(1)}%`;
