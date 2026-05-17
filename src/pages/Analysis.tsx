@@ -183,8 +183,11 @@ const Analysis = () => {
         };
         const elaScore = parseScore("ELA Score");
         const exifScore = parseScore("EXIF Score");
+        const aiScore = parseScore("AI/Deepfake Score");
         const c2pa = result.exifData?.["C2PA Provenance"];
         const aiTool = result.exifData?.["AI Tool Detected"];
+        const deepfakeProb = result.exifData?.["Deepfake Probability"];
+        const aiGenProb = result.exifData?.["AI-Generated Probability"];
 
         const scoreBarColor = (score: number) =>
           score >= 75 ? "bg-success" : score >= 35 ? "bg-warning" : "bg-destructive";
@@ -192,6 +195,7 @@ const Analysis = () => {
         const engines = [
           { label: "EXIF Metadata", icon: BadgeCheck, score: exifScore, desc: "Inspects camera metadata, software signatures, AI-tool markers, and C2PA provenance", offDesc: "EXIF analysis unavailable." },
           { label: "Error Level Analysis (ELA)", icon: Cpu, score: elaScore, desc: "Pixel-level recompression error analysis to detect localized edits", offDesc: "ELA requires the Python microservice." },
+          { label: "AI / Deepfake Detection", icon: ScanFace, score: aiScore, desc: "Sightengine deepfake + AI-generation models (Midjourney, Stable Diffusion, DALL·E, face-swap)", offDesc: "Sightengine API unavailable or not configured." },
         ].map(e => ({ ...e, has: e.score != null }));
 
         const hasAny = engines.some(e => e.has);
