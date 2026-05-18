@@ -473,16 +473,16 @@ async function runAllEngines(
   const exifExtras: Record<string, string> = {};
   const engines: EngineScore[] = [];
 
-  // Engine 1: EXIF Metadata (weight: 30 — soft signal, easily stripped)
+  // Engine 1: EXIF Metadata (weight: 35 — soft signal, easily stripped)
   const exifEval = computeExifScore(exifData);
-  engines.push({ name: "EXIF", score: exifEval.score, weight: 30 });
+  engines.push({ name: "EXIF", score: exifEval.score, weight: 35 });
   findings.push(exifEval.finding);
   exifExtras["EXIF Score"] = `${exifEval.score}/100`;
 
-  // Engine 2: ELA via Python microservice (weight: 10 — pixel-level edits)
+  // Engine 2: ELA via Python microservice (weight: 5 — pixel-level edits)
   const pythonResult = await callPythonELA(uint8, fileName);
   if (pythonResult) {
-    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 10 });
+    engines.push({ name: "ELA", score: pythonResult.ela_score, weight: 5 });
     for (const f of pythonResult.findings) {
       if (!f.category.toLowerCase().includes("ela")) continue;
       findings.push({
